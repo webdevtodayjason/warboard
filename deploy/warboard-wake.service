@@ -1,0 +1,6 @@
+[Unit]
+Description=WARBOARD: wake Tiiny models if gateway is up but models are missing
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/warboard.env
+ExecStart=/opt/warboard/deploy/wake-check.sh
