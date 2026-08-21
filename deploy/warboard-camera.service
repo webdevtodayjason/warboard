@@ -13,7 +13,10 @@ Group=warboard
 SupplementaryGroups=video
 # --host 127.0.0.1 is load-bearing: only server.py may reach the camera,
 # it is proxied to the browser through /cam.mjpg so nothing else is exposed.
-ExecStart=/usr/bin/ustreamer -d /dev/video0 -m MJPEG -r 1280x720 -f 15 --host 127.0.0.1 -p 8812
+# /dev/video0-3 are the CIX SoC codec engine, NOT the camera — the USB cam is
+# video4; the by-id path survives node renumbering across reboots (bug: NO SIGNAL
+# placeholder streams forever if this points at a non-capture node)
+ExecStart=/usr/bin/ustreamer -d /dev/v4l/by-id/usb-InnoMaker_Innomaker-U20CAM-1080PD_N-S1_20010101-video-index0 -m MJPEG -r 1280x720 -f 15 --host 127.0.0.1 -p 8812
 Restart=always
 RestartSec=10
 StandardOutput=journal
