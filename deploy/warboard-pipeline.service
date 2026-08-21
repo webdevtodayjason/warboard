@@ -1,0 +1,33 @@
+[Unit]
+Description=WARBOARD ingest + Tiiny NPU enrichment pipeline
+Documentation=https://warboard.semfreak.dev
+After=network-online.target
+Wants=network-online.target
+# Runs a week unattended: never let systemd give up after a burst of restarts.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=warboard
+Group=warboard
+WorkingDirectory=/opt/warboard
+EnvironmentFile=/etc/warboard.env
+# Without this python buffers stdout when not a tty and journald shows nothing for minutes.
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /opt/warboard/pipeline.py
+Restart=always
+RestartSec=5
+# SIGTERM is a clean exit; give an in-flight Tiiny inference room to finish.
+KillSignal=SIGTERM
+TimeoutStopSec=45
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=warboard-pipeline
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+# "full" (not "strict") keeps /opt writable for warboard.db and its WAL files.
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

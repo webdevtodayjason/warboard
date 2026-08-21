@@ -1,0 +1,28 @@
+[Unit]
+Description=WARBOARD rack camera MJPEG source (ustreamer :8812, loopback only)
+Documentation=https://github.com/pikvm/ustreamer
+After=network.target
+# The camera may be unplugged or enumerate late; restart forever instead of
+# hitting the default start-limit and staying dead for the rest of the week.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=warboard
+Group=warboard
+SupplementaryGroups=video
+# --host 127.0.0.1 is load-bearing: only server.py may reach the camera,
+# it is proxied to the browser through /cam.mjpg so nothing else is exposed.
+ExecStart=/usr/bin/ustreamer -d /dev/video0 -m MJPEG -r 1280x720 -f 15 --host 127.0.0.1 -p 8812
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=warboard-camera
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

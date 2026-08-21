@@ -1,0 +1,6 @@
+warboard.db*
+images/
+__pycache__/
+*.pyc
+.DS_Store
+burnin-runs/
