@@ -561,10 +561,18 @@ class Handler(BaseHTTPRequestHandler):
             log("[ask] kb retrieve failed: %s" % str(exc)[:120])
             return self.json(502, {"error": "vault unreachable"})
         out = []
-        for r in (data.get("results") or [])[:6]:
+        for r in (data.get("results") or []):
             if not isinstance(r, dict):
                 continue
-            out.append({"text": str(r.get("lossless_restatement") or "")[:700],
+            text = str(r.get("lossless_restatement") or "")
+            # PRIVACY BOUNDARY: the device vault also holds the owner's chat-history
+            # summaries and other personal files. The public board may only surface
+            # what warboard itself filed.
+            if "warboard-" not in text[:80].lower():
+                continue
+            if len(out) >= 5:
+                break
+            out.append({"text": text[:700],
                         "topic": str(r.get("topic") or "")[:40],
                         "entities": [str(e)[:40] for e in (r.get("entities") or [])[:6]],
                         "keywords": [str(k)[:40] for k in (r.get("keywords") or [])[:6]]})

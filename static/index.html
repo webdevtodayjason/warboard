@@ -261,8 +261,14 @@ canvas{display:block;max-width:100%;min-width:0}
 
 /* ─────────────── RIGHT COLUMN ─────────────── */
 .col-right{display:flex;flex-direction:column;gap:var(--gap);min-height:0}
-.unit{flex:1 1 auto;min-height:0}
+.unit{flex:0 1 auto;min-height:0;max-height:52vh}
+.unit .pbody{overflow-y:auto;min-height:0}
+/* bottom fade = "there is more, scroll" cue on the capped hardware panel */
+.unit::after{content:"";position:absolute;left:1px;right:1px;bottom:1px;height:26px;
+  background:linear-gradient(transparent,rgba(13,16,23,.95));pointer-events:none;border-radius:0 0 3px 3px}
 .cam{flex:0 0 auto}
+.oplog{flex:1 1 auto;min-height:170px;display:flex;flex-direction:column}
+.oplog .opbody{flex:1 1 auto;max-height:none}
 /* unit tabs (TIINY / ORANGE PI) */
 .utabs{display:inline-flex;gap:2px;margin-left:10px}
 .utab{
@@ -324,6 +330,7 @@ canvas{display:block;max-width:100%;min-width:0}
 #askGo:hover{background:#c8372d;color:#0a0c10}
 #askGo:disabled{opacity:.5;cursor:wait}
 .asknote{font-size:9.5px;color:#3f4a5a;letter-spacing:.05em;margin:7px 0 4px}
+#askOut{max-height:250px;overflow-y:auto}
 .askr{border-left:2px solid #4db6ac;background:#0e1218;padding:8px 12px;margin:8px 0;
   font-size:11.5px;line-height:1.6;color:#b9c0cf;white-space:pre-wrap;word-break:break-word}
 .askr .tags{margin-top:5px}
@@ -622,7 +629,7 @@ canvas{display:block;max-width:100%;min-width:0}
 
     <section class="panel a-ask">
       <div class="ph">
-        <span class="bar"></span><span class="t">ASK THE ARCHIVE</span>
+        <span class="bar"></span><span class="t" title="Semantic search over the intel digests warboard files into the Tiiny&#39;s on-device Knowledge Base. Results are retrieved by the device, scoped to warboard&#39;s own filings.">ASK THE ARCHIVE</span>
         <span class="r"><span>DEVICE KNOWLEDGE BASE</span></span>
       </div>
       <div class="pbody askbody">
@@ -637,7 +644,7 @@ canvas{display:block;max-width:100%;min-width:0}
 
     <section class="panel a-sitrep">
       <div class="ph">
-        <span class="bar"></span><span class="t">WATCH OFFICER SITREP</span>
+        <span class="bar"></span><span class="t" title="Hourly situation report: Ornith-35B reviews the last six hours of wire traffic and writes this brief, on-device.">WATCH OFFICER SITREP</span>
         <span class="r"><span id="sitrepAge">--</span></span>
       </div>
       <div class="pbody sitbody" id="sitrepBody">
@@ -662,7 +669,7 @@ canvas{display:block;max-width:100%;min-width:0}
         <div class="pbody" id="unitTiiny">
 
           <div class="usec">
-            <div class="h">NPU UTILISATION</div>
+            <div class="h" title="Live NPU load reported by the Tiiny device API, sampled every 5s. Spikes to 100% during enrichment, sitreps, and image generation.">NPU UTILISATION</div>
             <div class="gaugewrap">
               <canvas id="gauge"></canvas>
               <div class="gaugetxt">
@@ -670,19 +677,19 @@ canvas{display:block;max-width:100%;min-width:0}
                 <div class="k">NPU LOAD</div>
               </div>
             </div>
-            <div class="mrow"><span class="k">NPU MEM</span><span class="track"><span class="fill" id="fNpuMem"></span></span><span class="v" id="vNpuMem">-- / --</span></div>
+            <div class="mrow"><span class="k" title="Device NPU memory in use / total — the three resident models plus working buffers">NPU MEM</span><span class="track"><span class="fill" id="fNpuMem"></span></span><span class="v" id="vNpuMem">-- / --</span></div>
             <div class="mrow"><span class="k">CPU</span><span class="track"><span class="fill" id="fCpu"></span></span><span class="v" id="vCpu">--</span></div>
             <div class="mrow"><span class="k">HOST MEM</span><span class="track"><span class="fill" id="fMem"></span></span><span class="v" id="vMem">--</span></div>
           </div>
 
           <div class="usec">
-            <div class="h">TOKENS BURNED &mdash; CUMULATIVE</div>
+            <div class="h" title="Every output token Ornith has generated for this run: enrichments, cluster titles, and hourly sitreps. Odometer ticks whenever the model speaks.">TOKENS BURNED &mdash; CUMULATIVE</div>
             <div class="odo" id="odo"></div>
             <div class="odolab"><span>OUTPUT TOKENS</span><span>ENRICHED <b id="odoEnriched">0</b></span></div>
           </div>
 
           <div class="usec">
-            <div class="h">GENERATION RATE</div>
+            <div class="h" title="Tokens per second of the most recent inference. Flat ~26 tok/s is this device: it does one inference at a time and does not batch.">GENERATION RATE</div>
             <div class="tpsrow">
               <div class="num"><span id="tpsVal">--</span><span class="u">TOK/S</span></div>
               <canvas id="tpsSpark"></canvas>
@@ -690,16 +697,16 @@ canvas{display:block;max-width:100%;min-width:0}
           </div>
 
           <div class="usec">
-            <div class="h">LOADED MODELS &mdash; <span id="npuBudget">NPU --/--</span></div>
+            <div class="h" title="Models resident on the NPU simultaneously; U = the device&#39;s capacity units out of 100">LOADED MODELS &mdash; <span id="npuBudget">NPU --/--</span></div>
             <div id="models"><div class="empty" style="min-height:34px">NO MODEL TELEMETRY</div></div>
           </div>
 
           <div class="usec">
-            <div class="h">ENRICHMENT QUEUE</div>
+            <div class="h" title="Items fetched but not yet analyzed. Zero means the device has out-run the news cycle; it fills briefly at each 5-minute fetch and drains in seconds.">ENRICHMENT QUEUE</div>
             <div class="qgrid">
-              <div class="qcell"><div class="k">QUEUE</div><div class="v" id="qDepth">--</div><canvas id="qSpark"></canvas></div>
-              <div class="qcell"><div class="k">RATE</div><div class="v" id="qRate">--<small>/HR</small></div></div>
-              <div class="qcell"><div class="k">ERRORS 24H</div><div class="v" id="qErr">--</div></div>
+              <div class="qcell"><div class="k" title="Articles waiting for Ornith right now">QUEUE</div><div class="v" id="qDepth">--</div><canvas id="qSpark"></canvas></div>
+              <div class="qcell"><div class="k" title="Enrichments completed over the last 24 hours, per hour">RATE</div><div class="v" id="qRate">--<small>/HR</small></div></div>
+              <div class="qcell"><div class="k" title="Items that failed analysis in the last 24h (after 3 retries)">ERRORS 24H</div><div class="v" id="qErr">--</div></div>
             </div>
           </div>
 
@@ -748,7 +755,7 @@ canvas{display:block;max-width:100%;min-width:0}
       <!-- RACK CAM -->
       <section class="panel cam">
         <div class="ph">
-          <span class="bar"></span><span class="t">RACK CAM</span>
+          <span class="bar"></span><span class="t" title="Live MJPEG from the IR day/night camera on the Orange Pi in the rack">RACK CAM</span>
           <button class="xpand" data-x=".panel.cam" data-t="RACK CAM" type="button" title="expand">&#x26F6;</button>
           <span class="r"><span id="camState">STANDBY</span></span>
         </div>
@@ -769,7 +776,7 @@ canvas{display:block;max-width:100%;min-width:0}
       <!-- AI OPS LOG -->
       <section class="panel oplog">
         <div class="ph">
-          <span class="bar"></span><span class="t">AI OPS LOG</span>
+          <span class="bar"></span><span class="t" title="Everything the AI completes, as it happens: enrichments, image renders, vault filings, sitreps, fetches, errors. The amber line is what it is doing RIGHT NOW.">AI OPS LOG</span>
           <button class="xpand" data-x=".panel.oplog" data-t="AI OPS LOG" type="button" title="expand">&#x26F6;</button>
           <span class="r"><span id="opImages">IMG 0</span></span>
         </div>
