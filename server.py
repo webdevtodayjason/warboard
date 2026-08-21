@@ -411,6 +411,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.r_item(query)
             if path == "/api/log":
                 return self.r_log(query)
+            if path == "/api/ask":
+                return self.r_ask(query)
             if path == "/api/item/image":
                 return self.r_item_image(query)
             if path == "/cam.mjpg":
@@ -539,6 +541,40 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             con.close()
         self.json(200, {"clusters": out})
+
+    def r_ask(self, q):
+        import urllib.request
+        question = (_first(q, "q") or "").strip()
+        if not (3 <= len(question) <= 200):
+            return self.json(400, {"error": "q must be 3-200 chars"})
+        kb_port = os.environ.get("TIINY_KB_PORT", "5003")
+        host = os.environ.get("TIINY_HOST") or "192.168.1.158"
+        req = urllib.request.Request(
+            "http://%s:%s/kb/retrieve" % (host, kb_port),
+            data=json.dumps({"question": question}).encode(),
+            headers={"Authorization": "Bearer " + TIINY_KEY,
+                     "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=45) as resp:
+                data = json.loads(resp.read())
+        except Exception as exc:
+            log("[ask] kb retrieve failed: %s" % str(exc)[:120])
+            return self.json(502, {"error": "vault unreachable"})
+        out = []
+        for r in (data.get("results") or [])[:6]:
+            if not isinstance(r, dict):
+                continue
+            out.append({"text": str(r.get("lossless_restatement") or "")[:700],
+                        "topic": str(r.get("topic") or "")[:40],
+                        "entities": [str(e)[:40] for e in (r.get("entities") or [])[:6]],
+                        "keywords": [str(k)[:40] for k in (r.get("keywords") or [])[:6]]})
+        try:
+            ec = open_db()
+            db.add_event(ec, "VAULT", "archive query: %s" % question[:90])
+            ec.close()
+        except Exception:
+            pass
+        self.json(200, {"question": question, "results": out})
 
     def r_log(self, q):
         limit = as_int(_first(q, "limit"), 50) or 50
@@ -719,6 +755,10 @@ class Handler(BaseHTTPRequestHandler):
                 meta["tokens_total"] = as_int(db.get_meta(con, "tokens_total"), 0)
                 meta["items_enriched_total"] = as_int(
                     db.get_meta(con, "items_enriched_total"), 0)
+                meta["vault_digests_total"] = as_int(
+                    db.get_meta(con, "vault_digests_total"), 0)
+                meta["latest_sitrep"] = str(db.get_meta(con, "latest_sitrep", "") or "")[:2000]
+                meta["latest_sitrep_ts"] = as_float(db.get_meta(con, "latest_sitrep_ts"), None)
             except Exception as exc:
                 log("[stats] meta failed: %s" % exc)
             payload["meta"] = meta

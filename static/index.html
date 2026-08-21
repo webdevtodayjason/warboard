@@ -313,6 +313,23 @@ canvas{display:block;max-width:100%;min-width:0}
 .dsib li{padding:7px 0;border-bottom:1px dashed #1a1f29;font-size:11.5px;line-height:1.45;cursor:pointer;color:#9aa4b8}
 .dsib li:hover{color:#e8ebf2}
 .dsib li .s{color:#5c667a;font-size:9.5px;margin-right:8px}
+/* ask the archive + sitrep */
+.askbody{padding:10px 12px}
+#askForm{display:flex;gap:8px}
+#askQ{flex:1;font:inherit;font-size:11.5px;background:#0a0c10;border:1px solid #2a3040;
+  color:#e8ebf2;padding:8px 10px;border-radius:3px;letter-spacing:.03em}
+#askQ:focus{outline:none;border-color:#c8372d}
+#askGo{font:inherit;font-size:10px;letter-spacing:.1em;cursor:pointer;background:#181320;
+  border:1px solid #c8372d;color:#e8ebf2;padding:8px 14px;border-radius:3px}
+#askGo:hover{background:#c8372d;color:#0a0c10}
+#askGo:disabled{opacity:.5;cursor:wait}
+.asknote{font-size:9.5px;color:#3f4a5a;letter-spacing:.05em;margin:7px 0 4px}
+.askr{border-left:2px solid #4db6ac;background:#0e1218;padding:8px 12px;margin:8px 0;
+  font-size:11.5px;line-height:1.6;color:#b9c0cf;white-space:pre-wrap;word-break:break-word}
+.askr .tags{margin-top:5px}
+.askr .tag{font-size:8.5px}
+.sitbody{padding:10px 14px;font-size:11.5px;line-height:1.7;color:#b9c0cf;max-height:220px;overflow-y:auto}
+.oprow .k.VAULT{color:#4db6ac}.oprow .k.SITREP{color:#e8ebf2}
 /* mission button + about panel */
 .mission{font:inherit;font-size:9.5px;letter-spacing:.12em;cursor:pointer;margin-left:14px;
   background:#181320;border:1px solid #c8372d;border-radius:3px;color:#e8ebf2;padding:4px 12px;
@@ -600,6 +617,31 @@ canvas{display:block;max-width:100%;min-width:0}
       </div>
       <div class="pbody" id="dev">
         <div class="empty">NO DEVELOPING STORIES<span class="cur"></span></div>
+      </div>
+    </section>
+
+    <section class="panel a-ask">
+      <div class="ph">
+        <span class="bar"></span><span class="t">ASK THE ARCHIVE</span>
+        <span class="r"><span>DEVICE KNOWLEDGE BASE</span></span>
+      </div>
+      <div class="pbody askbody">
+        <form id="askForm" autocomplete="off">
+          <input id="askQ" type="text" maxlength="200" placeholder="query the vault — try &quot;what is warboard&quot; or &quot;what happened in CENTCOM&quot;">
+          <button type="submit" id="askGo">RETRIEVE</button>
+        </form>
+        <div class="asknote">Semantic retrieval runs on the Tiiny Pocket's on-device Vault — intel digests and the project brief are filed there daily by the pipeline.</div>
+        <div id="askOut"></div>
+      </div>
+    </section>
+
+    <section class="panel a-sitrep">
+      <div class="ph">
+        <span class="bar"></span><span class="t">WATCH OFFICER SITREP</span>
+        <span class="r"><span id="sitrepAge">--</span></span>
+      </div>
+      <div class="pbody sitbody" id="sitrepBody">
+        <div class="empty">FIRST SITREP DUE AT THE TOP OF THE HOUR<span class="cur"></span></div>
       </div>
     </section>
 
@@ -1433,6 +1475,36 @@ function loadDrawerImage(id){
     if(DR.cur===id) setDimgState("IMAGE UNAVAILABLE — DEVICE DECLINED");
   });
 }
+function askSubmit(ev){
+  ev.preventDefault();
+  var q=$("askQ").value.trim();
+  if(q.length<3) return;
+  var go=$("askGo"), out=$("askOut");
+  go.disabled=true;
+  out.innerHTML='<div class="empty" style="padding:14px 0">QUERYING DEVICE VAULT — SEMANTIC RETRIEVAL ON-NPU<span class="cur"></span></div>';
+  fetch("api/ask?q="+encodeURIComponent(q)).then(function(r){
+    if(!r.ok) throw 0; return r.json();
+  }).then(function(d){
+    go.disabled=false;
+    var rs=d.results||[];
+    if(!rs.length){ out.innerHTML='<div class="empty" style="padding:14px 0">NO VAULT MATCHES</div>'; return; }
+    var html=[];
+    for(var i=0;i<rs.length&&i<5;i++){
+      var r=rs[i], tags="";
+      var ents=(r.entities||[]).concat(r.keywords||[]).slice(0,5);
+      for(var k=0;k<ents.length;k++) tags+='<span class="tag cty">'+esc(ents[k])+'</span> ';
+      html.push('<div class="askr">'+esc(r.text)+(tags?'<div class="tags">'+tags+'</div>':'')+'</div>');
+    }
+    out.innerHTML=html.join("");
+  }).catch(function(){ go.disabled=false; out.innerHTML='<div class="empty" style="padding:14px 0">VAULT UNREACHABLE</div>'; });
+}
+function renderSitrep(meta){
+  var s=(meta&&meta.latest_sitrep||"").trim();
+  var ts=meta?meta.latest_sitrep_ts:null;
+  if(!s) return;
+  $("sitrepBody").innerHTML='<div>'+esc(s)+'</div>';
+  $("sitrepAge").textContent=ts?("FILED "+ago(ts).toUpperCase()):"";
+}
 var XP={ph:null,panel:null,big:false};
 function expandPanel(sel,title){
   var p=document.querySelector(sel);
@@ -1570,6 +1642,7 @@ function renderStats(){
   var st=S.stats||{};
   var dev=st.device||{}, meta=st.meta||{}, cnt=st.counts||{};
   renderPi(st.host);
+  renderSitrep(st.meta||{});
 
   /* Device freshness is authoritative: the API's device block is backfilled from a
      meta snapshot that never expires, so a dead Tiiny would otherwise keep painting
@@ -1849,6 +1922,7 @@ function boot(){
       ev.stopPropagation(); expandPanel(b.getAttribute("data-x"), b.getAttribute("data-t"));
     });})(xps[xi]);
   }
+  $("askForm").addEventListener("submit",askSubmit);
   $("missionBtn").addEventListener("click",function(){ expandPanel(".panel.about","THE MISSION — WHAT IS WARBOARD?"); });
   $("xclose").addEventListener("click",closeExpand);
   $("xback").addEventListener("click",closeExpand);

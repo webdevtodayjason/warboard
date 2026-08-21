@@ -589,6 +589,311 @@ def run_once():
         con.close()
 
 
+
+# --------------------------------------------------------------------------- #
+# 5. vault filer — daily intel digests + project brief into the device KB
+#    (exercises the Tiiny Knowledge Base / Vault SDK surface with real data)
+# --------------------------------------------------------------------------- #
+
+VAULT_CHECK_S = 900.0
+KB_HOST = os.environ.get("TIINY_HOST", "192.168.1.158")
+KB_PORT = os.environ.get("TIINY_KB_PORT", "5003")
+KB_KEY = os.environ.get("TIINY_KEY", "")
+
+ABOUT_DOC = """# WARBOARD — project brief
+
+WARBOARD (https://warboard.semfreak.dev) is a live OSINT world-news intelligence
+board whose AI runs entirely on a Tiiny Pocket edge device. It is a week-long
+real-world endurance test of the device under sustained production load.
+
+How it works: fourteen free news and security feeds (BBC, Guardian, Al Jazeera,
+DW, France24, Kyiv Independent, Times of Israel, CISA cyber advisories, USGS
+earthquakes, ReliefWeb and more) are ingested around the clock. Every item is
+processed on the Tiiny Pocket: Ornith-1.0-35B writes a one-line analysis and
+assigns a category, a combatant-command region (NORTHCOM, SOUTHCOM, EUCOM,
+CENTCOM, AFRICOM, INDOPACOM or GLOBAL) and a severity from S1 (low signal) to
+S5 (flash/critical). Qwen3-Embedding-0.6B embeds every item and cosine
+clustering fuses cross-source coverage into developing stories, which Ornith
+titles. Z-Image-Turbo paints photorealistic editorial images for articles on
+demand. All three models are resident simultaneously on the device NPU.
+
+The rig: the Tiiny Pocket does all AI inference. An Orange Pi 6 Plus in the
+server rack runs ingestion, the dashboard, an infrared rack camera, and a
+Cloudflare tunnel that publishes the board. The backend is pure Python stdlib.
+
+Every day WARBOARD files an intelligence digest of the day's enriched items
+into this Knowledge Base, so the vault accumulates a searchable archive of
+world events as analyzed on-device. The ASK THE ARCHIVE feature on the board
+performs semantic retrieval against this vault.
+
+Built by Jason Brashear (github.com/webdevtodayjason/warboard). Equipment:
+Tiiny AI Pocket. News content belongs to the cited sources; analyses are
+AI-generated on-device and can be wrong.
+"""
+
+
+def _kb_call(path, payload=None, raw_body=None, content_type=None, timeout=60):
+    import urllib.request
+    url = "http://%s:%s%s" % (KB_HOST, KB_PORT, path)
+    headers = {"Authorization": "Bearer " + KB_KEY}
+    data = None
+    if raw_body is not None:
+        data = raw_body
+        headers["Content-Type"] = content_type
+    elif payload is not None:
+        data = json.dumps(payload).encode()
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read())
+
+
+def _vault_file(con, filename, text):
+    """Upload + index one markdown file. Returns True on success."""
+    boundary = "----warboardvault%d" % int(time.time() * 1000)
+    payload = ("--%s\r\nContent-Disposition: form-data; name=\"file\"; "
+               "filename=\"%s\"\r\nContent-Type: text/markdown\r\n\r\n"
+               % (boundary, filename)).encode() + text.encode() \
+              + ("\r\n--%s--\r\n" % boundary).encode()
+    up = _kb_call("/kb/upload", raw_body=payload,
+                  content_type="multipart/form-data; boundary=" + boundary,
+                  timeout=120)
+    sid = up.get("source_id")
+    if not up.get("success") or not sid:
+        raise RuntimeError("upload rejected: %s" % str(up)[:150])
+    fin = _kb_call("/kb/finalize", payload={"source_id": sid}, timeout=300)
+    if not fin.get("success"):
+        raise RuntimeError("finalize rejected: %s" % str(fin)[:150])
+    db.add_event(con, "VAULT", "filed %s to device Knowledge Base (%d entries indexed)"
+                 % (filename, fin.get("generated_entries") or 0))
+    _bump_meta(con, "vault_digests_total", 1)
+    log("[vault] filed %s (%d entries)" % (filename, fin.get("generated_entries") or 0))
+    return True
+
+
+def _build_digest(con, start_ts, end_ts, day_label, partial=False):
+    rows = con.execute(
+        "SELECT * FROM items WHERE enriched_at IS NOT NULL "
+        "AND COALESCE(published, fetched_at) >= ? AND COALESCE(published, fetched_at) < ? "
+        "ORDER BY severity DESC, COALESCE(published, fetched_at) DESC LIMIT 250",
+        (start_ts, end_ts)).fetchall()
+    if not rows:
+        return None
+    out = ["# WARBOARD daily intelligence digest — %s%s" % (day_label,
+           " (partial: filed at bootstrap, covers the day so far)" if partial else ""),
+           "", "AI analysis performed on-device by Ornith-1.0-35B on a Tiiny Pocket. "
+           "%d enriched items. Severity scale S1 (low) to S5 (flash/critical)." % len(rows), ""]
+    by_region = {}
+    for r in rows:
+        by_region.setdefault(r["region"] or "GLOBAL", []).append(r)
+    for region in ("CENTCOM", "EUCOM", "INDOPACOM", "AFRICOM", "NORTHCOM", "SOUTHCOM", "GLOBAL"):
+        items = by_region.get(region)
+        if not items:
+            continue
+        out.append("## %s (%d items)" % (region, len(items)))
+        for r in items[:40]:
+            out.append("- [S%s/%s] %s — %s (%s)" % (
+                r["severity"], r["category"], r["title"],
+                (r["summary"] or "").strip(), r["source"]))
+        out.append("")
+    try:
+        cl = con.execute(
+            "SELECT label, item_count, top_severity FROM clusters "
+            "WHERE label IS NOT NULL AND updated_at >= ? ORDER BY top_severity DESC, "
+            "item_count DESC LIMIT 12", (start_ts,)).fetchall()
+        if cl:
+            out.append("## Developing stories")
+            for c in cl:
+                out.append("- %s (%d reports, peak S%s)"
+                           % (c["label"], c["item_count"], c["top_severity"]))
+    except Exception:
+        pass
+    return "\n".join(out)
+
+
+def vault_body(con):
+    if not KB_KEY:
+        return None
+    now = time.time()
+    # one-time bootstrap: project brief + today-so-far partial digest
+    if not db.get_meta(con, "vault_bootstrapped"):
+        _vault_file(con, "warboard-project-brief.md", ABOUT_DOC)
+        day = time.strftime("%Y-%m-%d", time.gmtime(now))
+        start = time.mktime(time.strptime(day, "%Y-%m-%d")) - time.timezone
+        text = _build_digest(con, start, now, day, partial=True)
+        if text:
+            _vault_file(con, "warboard-intel-%s-partial.md" % day, text)
+        db.set_meta(con, "vault_bootstrapped", "1")
+        db.set_meta(con, "vault_last_day", day)
+        return None
+    # daily: after 00:15Z, file the full previous UTC day once
+    gm = time.gmtime(now)
+    if gm.tm_hour == 0 and gm.tm_min < 15:
+        return None
+    yday = time.strftime("%Y-%m-%d", time.gmtime(now - 86400))
+    today = time.strftime("%Y-%m-%d", time.gmtime(now))
+    if db.get_meta(con, "vault_last_day") not in (None, "", yday, today):
+        pass  # fallthrough files yday below
+    if db.get_meta(con, "vault_last_day") != today and yday != db.get_meta(con, "vault_last_day", ""):
+        start = time.mktime(time.strptime(yday, "%Y-%m-%d")) - time.timezone
+        text = _build_digest(con, start, start + 86400, yday)
+        if text:
+            _vault_file(con, "warboard-intel-%s.md" % yday, text)
+        db.set_meta(con, "vault_last_day", today)
+    return None
+
+
+
+# --------------------------------------------------------------------------- #
+# 6. sitrep + idle auto-imaging — keep the NPU doing real, visible work
+# --------------------------------------------------------------------------- #
+
+SITREP_INTERVAL_S = 3600.0
+AUTOIMG_DAILY_CAP = 12
+IMAGES_DIR = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "images")
+
+
+def _sitrep_due(con):
+    try:
+        last = float(db.get_meta(con, "latest_sitrep_ts", "0") or 0)
+    except (TypeError, ValueError):
+        last = 0
+    return time.time() - last >= SITREP_INTERVAL_S
+
+
+def _write_sitrep(con):
+    rows = con.execute(
+        "SELECT title, summary, region, category, severity FROM items "
+        "WHERE enriched_at IS NOT NULL AND COALESCE(published, fetched_at) >= ? "
+        "ORDER BY severity DESC, COALESCE(published, fetched_at) DESC LIMIT 30",
+        (time.time() - 6 * 3600,)).fetchall()
+    if len(rows) < 5:
+        return
+    lines = ["- [S%s/%s/%s] %s: %s" % (r["severity"], r["region"], r["category"],
+             r["title"], (r["summary"] or "")[:140]) for r in rows]
+    system = ("You are the watch officer on an OSINT desk. Write a terse SITREP "
+              "(240 words max) of the last six hours from the wire items given: "
+              "lead with the most severe developments, group by region, plain "
+              "declarative prose, no preamble, no markdown headers.")
+    res, _stats = tiiny().chat_json(
+        system + " Return ONLY JSON: {\"sitrep\": \"<the report>\"}",
+        "\n".join(lines), max_tokens=900)
+    raw = (res or {}).get("sitrep")
+    if not raw or not str(raw).strip():
+        return
+    sitrep = " ".join(str(raw).split())[:1900]
+    db.set_meta(con, "latest_sitrep", sitrep)
+    db.set_meta(con, "latest_sitrep_ts", "%.3f" % time.time())
+    db.add_event(con, "SITREP", "watch officer filed hourly SITREP (%d wire items reviewed)"
+                 % len(rows))
+    log("[sitrep] filed (%d chars from %d items)" % (len(sitrep), len(rows)))
+
+
+def _autoimage_one(con):
+    """Pre-render one S4+ story image while the queue is empty. Honors the same
+    img_hold lease the server uses so a viewer's click always wins."""
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    if db.get_meta(con, "autoimg_day") != today:
+        db.set_meta(con, "autoimg_day", today)
+        db.set_meta(con, "autoimg_count", "0")
+    try:
+        done = int(db.get_meta(con, "autoimg_count", "0") or 0)
+    except (TypeError, ValueError):
+        done = 0
+    if done >= AUTOIMG_DAILY_CAP:
+        return False
+    try:
+        hold = float(db.get_meta(con, "img_hold_until", "0") or 0)
+    except (TypeError, ValueError):
+        hold = 0
+    if time.time() < hold:
+        return False
+    row = None
+    for r in con.execute(
+            "SELECT id, title, summary FROM items WHERE enriched_at IS NOT NULL "
+            "AND severity >= 4 AND COALESCE(published, fetched_at) >= ? "
+            "ORDER BY COALESCE(published, fetched_at) DESC LIMIT 20",
+            (time.time() - 86400,)).fetchall():
+        if not os.path.exists(os.path.join(IMAGES_DIR, "%d.png" % r["id"])):
+            row = r
+            break
+    if row is None:
+        return False
+    import urllib.request
+    prompt = ("Photorealistic documentary photograph of the scene: %s. %s "
+              "Dramatic natural lighting, cinematic composition."
+              % (row["title"], (row["summary"] or "")[:200]))
+    body = json.dumps({"model": "Tongyi-MAI/Z-Image-Turbo", "prompt": prompt,
+                       "negative_prompt": "text, letters, words, signage, watermark, low quality",
+                       "width": 512, "height": 512,
+                       "seed": int(row["id"]) % 2147483647, "steps": 8}).encode()
+    req = urllib.request.Request(
+        "http://%s:8800/v1/image/generate" % KB_HOST, data=body,
+        headers={"Authorization": "Bearer " + KB_KEY,
+                 "Content-Type": "application/json"})
+    try:
+        db.set_meta(con, "img_hold_until", "%.3f" % (time.time() + 90))
+        db.set_meta(con, "now_doing", "AUTO-IMAGING S4+ STORY #%d" % row["id"])
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            raw = resp.read()
+        if raw[:1] == b"{":
+            return False  # device busy or declined; try next idle pass
+        os.makedirs(IMAGES_DIR, exist_ok=True)
+        tmp = os.path.join(IMAGES_DIR, "%d.png.tmp" % row["id"])
+        with open(tmp, "wb") as f:
+            f.write(raw)
+        os.replace(tmp, os.path.join(IMAGES_DIR, "%d.png" % row["id"]))
+        db.set_meta(con, "autoimg_count", str(done + 1))
+        db.add_event(con, "IMAGE", "auto-rendered S4+ story #%d — %s"
+                     % (row["id"], (row["title"] or "")[:80]))
+        log("[autoimg] #%d rendered" % row["id"])
+        return True
+    except Exception as exc:
+        log("[autoimg] #%d failed: %s" % (row["id"], str(exc)[:100]))
+        return False
+    finally:
+        try:
+            db.set_meta(con, "img_hold_until", "0")
+            db.set_meta(con, "now_doing", "")
+        except Exception:
+            pass
+
+
+def sitrep_body(con):
+    if not KB_KEY:
+        return None
+    # only work when the enrichment queue is quiet — enrichment always wins
+    pending = 0
+    try:
+        pending = int((db.counts(con) or {}).get("pending") or 0)
+    except Exception:
+        pass
+    if pending > 0:
+        return 60.0
+    if _sitrep_due(con):
+        while not STOP.is_set():
+            try:
+                hold = float(db.get_meta(con, "img_hold_until", "0") or 0)
+            except (TypeError, ValueError):
+                hold = 0
+            if time.time() >= hold:
+                break
+            time.sleep(2)
+        try:
+            db.set_meta(con, "enrich_busy_until", "%.3f" % (time.time() + 120))
+            db.set_meta(con, "now_doing", "WRITING HOURLY SITREP — ORNITH-35B")
+            _write_sitrep(con)
+        finally:
+            try:
+                db.set_meta(con, "enrich_busy_until", "0")
+                db.set_meta(con, "now_doing", "")
+            except Exception:
+                pass
+        return 30.0
+    _autoimage_one(con)
+    return None
+
+
 def main():
     log("warboard pipeline start db=%s tiiny=%s"
         % (DB_PATH, os.environ.get("TIINY_HOST", "192.168.1.158")))
@@ -618,6 +923,8 @@ def main():
         _spawn("enrich", enrich_body, IDLE_SLEEP),
         _spawn("device", device_body, DEVICE_INTERVAL),
         _spawn("janitor", janitor_body, JANITOR_INTERVAL),
+        _spawn("vault", vault_body, VAULT_CHECK_S),
+        _spawn("sitrep", sitrep_body, 300.0),
     ]
     for th in threads:
         th.start()
