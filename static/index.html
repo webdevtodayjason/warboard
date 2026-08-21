@@ -469,7 +469,7 @@ canvas{display:block;max-width:100%;min-width:0}
 /* ─────────────── CAM ─────────────── */
 .camstage{position:relative;height:210px;background:#05070a;overflow:hidden}
 .camstage img{width:100%;height:100%;object-fit:cover;display:none;filter:contrast(1.06) saturate(.85);
-  transform:rotate(180deg)} /* cam is mounted inverted; drop this if it gets remounted */
+  transform:rotate(90deg)} /* cam is rack-mounted ~90deg off; tune this if remounted */
 .camstage.live img{display:block}
 .camoff{
   position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
