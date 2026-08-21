@@ -278,6 +278,25 @@ def set_meta(con, key, value):
 # --- housekeeping --------------------------------------------------------
 
 
+def add_event(con, kind, msg):
+    """One line in the AI ops log. kind: FETCH|ENRICH|IMAGE|CLUSTER|ERROR|SYS."""
+    try:
+        with con:
+            con.execute("INSERT INTO oplog(ts, kind, msg) VALUES(?,?,?)",
+                        (_now(), str(kind)[:12], str(msg)[:300]))
+    except sqlite3.Error:
+        pass  # the log must never break the operation it narrates
+
+
+def recent_events(con, limit=60):
+    try:
+        return con.execute(
+            "SELECT ts, kind, msg FROM oplog ORDER BY ts DESC LIMIT ?",
+            (max(1, min(200, int(limit))),)).fetchall()
+    except sqlite3.Error:
+        return []
+
+
 def prune(con):
     """Drop aged-out items/metrics and clusters left with no members."""
     now = _now()
@@ -286,6 +305,7 @@ def prune(con):
                             (now - ITEM_RETENTION_S,)).rowcount
         metrics = con.execute("DELETE FROM metrics WHERE ts < ?",
                               (now - METRIC_RETENTION_S,)).rowcount
+        con.execute("DELETE FROM oplog WHERE ts < ?", (now - 48 * 3600,))
         clusters = con.execute(
             "DELETE FROM clusters WHERE id NOT IN"
             " (SELECT DISTINCT cluster_id FROM items WHERE cluster_id IS NOT NULL)").rowcount

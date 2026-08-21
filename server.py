@@ -409,6 +409,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.r_stats(query)
             if path == "/api/item":
                 return self.r_item(query)
+            if path == "/api/log":
+                return self.r_log(query)
             if path == "/api/item/image":
                 return self.r_item_image(query)
             if path == "/cam.mjpg":
@@ -532,6 +534,21 @@ class Handler(BaseHTTPRequestHandler):
             con.close()
         self.json(200, {"clusters": out})
 
+    def r_log(self, q):
+        limit = as_int(_first(q, "limit"), 50) or 50
+        con = open_db()
+        try:
+            rows = db.recent_events(con, limit=limit)
+            now = db.get_meta(con, "now_doing", "") or ""
+            imgs = as_int(db.get_meta(con, "images_total"), 0) or 0
+        finally:
+            con.close()
+        self.json(200, {"now": now,
+                        "images_total": imgs,
+                        "events": [{"ts": as_float(rget(r, "ts"), None),
+                                    "kind": rget(r, "kind", ""),
+                                    "msg": rget(r, "msg", "")} for r in rows]})
+
     def r_item(self, q):
         item_id = as_int(_first(q, "id"), None)
         if not item_id:
@@ -607,6 +624,11 @@ class Handler(BaseHTTPRequestHandler):
             hold_con = open_db()
             try:
                 db.set_meta(hold_con, "img_hold_until", "%.3f" % (time.time() + 180))
+                db.set_meta(hold_con, "now_doing",
+                            "GENERATING IMAGE #%d — Z-IMAGE-TURBO" % item_id)
+                db.add_event(hold_con, "IMAGE",
+                             "tasking Z-Image-Turbo for #%d — %s"
+                             % (item_id, str(rget(row, "title", ""))[:80]))
                 deadline = time.time() + 60
                 while time.time() < deadline:
                     busy = as_float(db.get_meta(hold_con, "enrich_busy_until"), 0) or 0
@@ -629,6 +651,13 @@ class Handler(BaseHTTPRequestHandler):
                 time.sleep(6)
             if data is None:
                 log("[image] #%d failed: %s" % (item_id, err))
+                try:
+                    ec = open_db()
+                    db.add_event(ec, "ERROR", "image #%d failed: %s"
+                                 % (item_id, str(err)[:100]))
+                    ec.close()
+                except Exception:
+                    pass
                 return self.json(502, {"error": "generation failed",
                                        "detail": err})
             try:
@@ -640,11 +669,22 @@ class Handler(BaseHTTPRequestHandler):
             except OSError as exc:
                 log("[image] cache write failed: %s" % exc)
             log("[image] #%d generated (%d bytes)" % (item_id, len(data)))
+            try:
+                done_con = open_db()
+                db.add_event(done_con, "IMAGE",
+                             "#%d rendered (%d KB, 512x512, 8 steps)"
+                             % (item_id, len(data) // 1024))
+                cur = as_int(db.get_meta(done_con, "images_total"), 0) or 0
+                db.set_meta(done_con, "images_total", str(cur + 1))
+                done_con.close()
+            except Exception:
+                pass
             return self.send_bytes(200, data, "image/png")
         finally:
             try:
                 rel = open_db()
                 db.set_meta(rel, "img_hold_until", "0")
+                db.set_meta(rel, "now_doing", "")
                 rel.close()
             except Exception:
                 pass

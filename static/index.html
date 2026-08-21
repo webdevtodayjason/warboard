@@ -297,6 +297,19 @@ canvas{display:block;max-width:100%;min-width:0}
 .dsib li{padding:7px 0;border-bottom:1px dashed #1a1f29;font-size:11.5px;line-height:1.45;cursor:pointer;color:#9aa4b8}
 .dsib li:hover{color:#e8ebf2}
 .dsib li .s{color:#5c667a;font-size:9.5px;margin-right:8px}
+/* AI ops log */
+.oplog .opnow{display:flex;align-items:center;gap:7px;padding:7px 12px;border-bottom:1px solid #14181f;
+  font-size:10px;letter-spacing:.08em;color:#d9a441;text-transform:uppercase;min-height:28px}
+.oplog .opnow .dotp{width:7px;height:7px;border-radius:50%;background:#d9a441;animation:oppulse 1.2s ease-in-out infinite;flex:0 0 auto}
+.oplog .opnow.idle{color:#3f4a5a}.oplog .opnow.idle .dotp{background:#3f4a5a;animation:none}
+@keyframes oppulse{0%,100%{opacity:1}50%{opacity:.25}}
+.opbody{max-height:190px;overflow-y:auto;padding:4px 0;font-size:10px;line-height:1.55}
+.oprow{display:flex;gap:8px;padding:2px 12px;color:#707a8e}
+.oprow .t{color:#3f4a5a;flex:0 0 auto;font-variant-numeric:tabular-nums}
+.oprow .k{flex:0 0 52px;font-weight:600;letter-spacing:.06em}
+.oprow .k.ENRICH{color:#2fa96d}.oprow .k.IMAGE{color:#d9a441}.oprow .k.FETCH{color:#5b8dd9}
+.oprow .k.CLUSTER{color:#a06cd5}.oprow .k.ERROR{color:#c8372d}.oprow .k.SYS{color:#5c667a}
+.oprow .m{flex:1;word-break:break-word}
 .wrow .ttl{cursor:pointer}
 .sbgh{color:#5c667a;text-decoration:none;letter-spacing:.06em}
 .sbgh:hover{color:#c8372d}
@@ -647,6 +660,16 @@ canvas{display:block;max-width:100%;min-width:0}
             <span class="rec"><i></i>LIVE</span>
           </div>
         </div>
+      </section>
+
+      <!-- AI OPS LOG -->
+      <section class="panel oplog">
+        <div class="ph">
+          <span class="bar"></span><span class="t">AI OPS LOG</span>
+          <span class="r"><span id="opImages">IMG 0</span></span>
+        </div>
+        <div class="opnow" id="opNow"><span class="dotp"></span><span id="opNowTxt">IDLE</span></div>
+        <div class="opbody" id="opBody"><div class="empty">AWAITING TELEMETRY<span class="cur"></span></div></div>
       </section>
 
     </div>
@@ -1293,6 +1316,27 @@ function loadDrawerImage(id){
     if(DR.cur===id) setDimgState("IMAGE UNAVAILABLE — DEVICE DECLINED");
   });
 }
+function renderOps(d){
+  var nowEl=$("opNow"), txt=$("opNowTxt");
+  var doing=(d.now||"").trim();
+  nowEl.classList.toggle("idle",!doing);
+  txt.textContent=doing||"IDLE — AWAITING TASKING";
+  $("opImages").textContent="IMG "+num(d.images_total,0);
+  var evs=Array.isArray(d.events)?d.events:[];
+  var host=$("opBody");
+  if(!evs.length){ host.innerHTML='<div class="empty">NO EVENTS LOGGED<span class="cur"></span></div>'; return; }
+  var html=[];
+  for(var i=0;i<evs.length;i++){
+    var e=evs[i], k=esc(String(e.kind||"SYS").toUpperCase());
+    html.push('<div class="oprow"><span class="t">'+hhmmZ(e.ts)+'Z</span>'+
+              '<span class="k '+k+'">'+k+'</span><span class="m">'+esc(e.msg||"")+'</span></div>');
+  }
+  host.innerHTML=html.join("");
+}
+function loadOps(){
+  fetch("api/log?limit=40").then(function(r){return r.json();})
+    .then(renderOps).catch(function(){});
+}
 function drawerClickHandler(e){
   var li=e.target.closest("li[data-id]");
   if(li){ openDrawer(li.getAttribute("data-id")); return; }
@@ -1651,6 +1695,7 @@ function boot(){
 
   loadStats(); loadItems(); loadClusters();
   startCam(); probeCam();
+  loadOps(); setInterval(loadOps, 5000);
   $("utabTiiny").addEventListener("click",function(){ setUnitTab(false); });
   $("utabPi").addEventListener("click",function(){ setUnitTab(true); });
   $("wire").addEventListener("click",wireClickHandler);

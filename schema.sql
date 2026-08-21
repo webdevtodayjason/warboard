@@ -34,3 +34,7 @@ CREATE TABLE IF NOT EXISTS metrics(
 CREATE INDEX IF NOT EXISTS idx_metrics ON metrics(key, ts DESC);
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
 -- meta keys: embeddings(on|off), last_fetch_ts, pipeline_started_ts, tokens_total, items_enriched_total
+CREATE TABLE IF NOT EXISTS oplog(
+  ts REAL NOT NULL, kind TEXT NOT NULL, msg TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_oplog ON oplog(ts DESC);

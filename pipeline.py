@@ -195,6 +195,14 @@ def fetch_body(con):
     errors = res.get("errors") or {}
     ts = time.time()
     db.set_meta(con, "last_fetch_ts", "%.3f" % ts)
+    try:
+        if new:
+            db.add_event(con, "FETCH", "+%d new items from %d sources"
+                         % (new, checked))
+        for name, msg in errors.items():
+            db.add_event(con, "ERROR", "feed %s: %s" % (name, str(msg)[:80]))
+    except Exception:
+        pass
     detail = ""
     if errors:
         detail = " failed=" + ",".join(sorted(errors)[:6])
@@ -293,6 +301,7 @@ def _label_clusters(con):
         try:
             db.upsert_cluster(con, cid, label, r["top_severity"] or 1, time.time())
             log("[cluster] %s labelled: %s" % (cid, label))
+            db.add_event(con, "CLUSTER", "CL-%s titled: %s" % (cid, label[:100]))
         except Exception as exc:
             log("[cluster] label write %s failed: %s" % (cid, exc))
 
@@ -363,6 +372,7 @@ def _enrich_one(con, row):
             raise DeviceDown(err)
         db.mark_error(con, item_id, err[:300])
         log("[enrich] #%s FAILED %s" % (item_id, err[:160]))
+        db.add_event(con, "ERROR", "enrich #%s failed: %s" % (item_id, err[:120]))
         return False
 
     stats = res.get("stats") or {}
@@ -411,6 +421,9 @@ def _enrich_one(con, row):
     log("[enrich] #%s S%d %s/%s cl=%s %.1ftok/s %.0fms %s"
         % (item_id, sev, res.get("region"), res.get("category"), cid, tps, ms,
            (row["title"] or "")[:70]))
+    db.add_event(con, "ENRICH", "#%s S%d %s/%s %.1f tok/s — %s"
+                 % (item_id, sev, res.get("region"), res.get("category"), tps,
+                    (row["title"] or "")[:90]))
     return True
 
 
@@ -450,6 +463,8 @@ def enrich_body(con):
             time.sleep(1.5)
         try:
             db.set_meta(con, "enrich_busy_until", "%.3f" % (time.time() + 120))
+            db.set_meta(con, "now_doing", "ENRICHING #%s — %s"
+                        % (row["id"], (row["title"] or "")[:80]))
         except Exception:
             pass
         try:
@@ -458,6 +473,7 @@ def enrich_body(con):
         finally:
             try:
                 db.set_meta(con, "enrich_busy_until", "0")
+                db.set_meta(con, "now_doing", "")
             except Exception:
                 pass
 
