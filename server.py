@@ -291,16 +291,87 @@ def host_stats():
             out["mem_used_mb"] = round(used / 1024)
             out["mem_pct"] = round(100.0 * used / mi["MemTotal"], 1)
     temps = []
+    zones = []
     try:
-        for zone in os.listdir("/sys/class/thermal"):
+        for zone in sorted(os.listdir("/sys/class/thermal")):
             if zone.startswith("thermal_zone"):
                 raw = _read("/sys/class/thermal/%s/temp" % zone)
+                name = (_read("/sys/class/thermal/%s/type" % zone) or zone).strip()
                 if raw and raw.strip().lstrip("-").isdigit():
-                    temps.append(int(raw.strip()) / 1000.0)
+                    t = int(raw.strip()) / 1000.0
+                    temps.append(t)
+                    zones.append({"name": name[:24], "c": round(t, 1)})
     except OSError:
         pass
     if temps:
         out["temp_c"] = round(max(temps), 1)
+    out["temp_zones"] = zones[:12]
+    # drive identity
+    model = _read("/sys/block/nvme0n1/device/model")
+    out["disk_model"] = model.strip() if model else None
+    # network: default-route iface, addr, link speed, live rx/tx rates
+    out["net"] = None
+    try:
+        iface = None
+        raw = _read("/proc/net/route") or ""
+        for line in raw.splitlines()[1:]:
+            f = line.split()
+            if len(f) > 1 and f[1] == "00000000":
+                iface = f[0]
+                break
+        if iface:
+            rx = int(_read("/sys/class/net/%s/statistics/rx_bytes" % iface) or 0)
+            tx = int(_read("/sys/class/net/%s/statistics/tx_bytes" % iface) or 0)
+            now = time.time()
+            with _HOST["lock"]:
+                prev = _HOST.get("net")
+                _HOST["net"] = (now, rx, tx)
+            rate_rx = rate_tx = None
+            if prev and now > prev[0]:
+                dt = now - prev[0]
+                rate_rx = max(0, (rx - prev[1]) / dt)
+                rate_tx = max(0, (tx - prev[2]) / dt)
+            speed = _read("/sys/class/net/%s/speed" % iface)
+            addr = None
+            try:
+                probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                probe.settimeout(1)
+                probe.connect(("8.8.8.8", 53))
+                addr = probe.getsockname()[0]
+                probe.close()
+            except OSError:
+                pass
+            out["net"] = {
+                "iface": iface, "addr": addr,
+                "wireless": os.path.isdir("/sys/class/net/%s/wireless" % iface),
+                "speed_mb": int(speed.strip()) if speed and speed.strip().lstrip("-").isdigit() else None,
+                "rx_bps": round(rate_rx) if rate_rx is not None else None,
+                "tx_bps": round(rate_tx) if rate_tx is not None else None,
+            }
+    except Exception:
+        pass
+    # archive growth: how big is this thing getting
+    grow = {}
+    try:
+        grow["db_mb"] = round(os.path.getsize(DB_PATH) / 1e6, 1)
+        wal = DB_PATH + "-wal"
+        if os.path.exists(wal):
+            grow["db_mb"] = round(grow["db_mb"] + os.path.getsize(wal) / 1e6, 1)
+    except OSError:
+        pass
+    try:
+        n = tot = 0
+        with os.scandir(IMAGES_DIR) as it:
+            for e in it:
+                if e.name.endswith(".png"):
+                    n += 1
+                    tot += e.stat().st_size
+        grow["images_n"] = n
+        grow["images_mb"] = round(tot / 1e6, 1)
+    except OSError:
+        grow["images_n"] = 0
+        grow["images_mb"] = 0.0
+    out["growth"] = grow
     try:
         out["load1"] = round(os.getloadavg()[0], 2)
     except OSError:

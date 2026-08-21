@@ -143,10 +143,11 @@ canvas{display:block;max-width:100%;min-width:0}
 .grid{
   flex:1 1 auto;min-height:0;display:grid;gap:var(--gap);padding:var(--gap);
   grid-template-columns:minmax(330px,1.02fr) minmax(470px,1.58fr) minmax(318px,.95fr);
-  grid-template-rows:auto minmax(0,1fr);
-  grid-template-areas:"wire aor right" "wire dev right";
+  grid-template-rows:auto minmax(0,1fr) auto;
+  grid-template-areas:"wire aor right" "wire dev right" "ask sitrep right";
 }
 .a-wire{grid-area:wire}.a-aor{grid-area:aor}.a-dev{grid-area:dev}.a-right{grid-area:right}
+.a-ask{grid-area:ask}.a-sitrep{grid-area:sitrep}
 /* every grid/flex child opts out of min-content sizing so nothing can widen the board */
 .grid>*,.col-right>*,.aorwrap>*,.qgrid>*,.tpsrow>*,.pbody,.mrow>*{min-width:0}
 
@@ -261,13 +262,13 @@ canvas{display:block;max-width:100%;min-width:0}
 
 /* ─────────────── RIGHT COLUMN ─────────────── */
 .col-right{display:flex;flex-direction:column;gap:var(--gap);min-height:0}
-.unit{flex:0 1 auto;min-height:0;max-height:52vh}
-.unit .pbody{overflow-y:auto;min-height:0}
+.unit{flex:5 1 0;min-height:260px}
+.unit .pbody{overflow-y:auto;min-height:0;flex:1 1 auto}
 /* bottom fade = "there is more, scroll" cue on the capped hardware panel */
 .unit::after{content:"";position:absolute;left:1px;right:1px;bottom:1px;height:26px;
   background:linear-gradient(transparent,rgba(13,16,23,.95));pointer-events:none;border-radius:0 0 3px 3px}
 .cam{flex:0 0 auto}
-.oplog{flex:1 1 auto;min-height:170px;display:flex;flex-direction:column}
+.oplog{flex:3 1 0;min-height:150px;display:flex;flex-direction:column}
 .oplog .opbody{flex:1 1 auto;max-height:none}
 /* unit tabs (TIINY / ORANGE PI) */
 .utabs{display:inline-flex;gap:2px;margin-left:10px}
@@ -280,6 +281,10 @@ canvas{display:block;max-width:100%;min-width:0}
 .utab:hover:not(.on){color:#9aa4b8}
 .piident .nm{font-size:13px;letter-spacing:.06em;color:#e8ebf2;margin-bottom:3px}
 .piident .sub{font-size:10.5px;line-height:1.55;color:#5c667a;letter-spacing:.03em}
+.pizones{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
+.pizones .z{font-size:8.5px;letter-spacing:.05em;color:#5c667a;border:1px solid #1d222e;
+  border-radius:2px;padding:2px 6px;background:#0a0c10}
+.pizones .z b{color:#9aa4b8;font-weight:600}
 /* article drawer */
 .dback{position:fixed;inset:0;background:rgba(4,6,10,.62);backdrop-filter:blur(2px);
   opacity:0;pointer-events:none;transition:opacity .22s;z-index:55}
@@ -740,6 +745,37 @@ canvas{display:block;max-width:100%;min-width:0}
               <div class="qcell"><div class="k">SOC TEMP</div><div class="v" id="piTemp">--<small>&deg;C</small></div></div>
               <div class="qcell"><div class="k">LOAD 1M</div><div class="v" id="piLoad">--</div></div>
               <div class="qcell"><div class="k">UPTIME</div><div class="v" id="piUp">--</div></div>
+            </div>
+            <div id="piZones" class="pizones"></div>
+          </div>
+
+          <div class="usec">
+            <div class="h">STORAGE</div>
+            <div class="piident"><div class="sub" id="piDiskModel">--</div></div>
+            <div class="mrow"><span class="k">ROOT /</span><span class="track"><span class="fill" id="fPiDisk2"></span></span><span class="v" id="vPiDisk2">--</span></div>
+            <div class="qgrid">
+              <div class="qcell"><div class="k">ARCHIVE DB</div><div class="v" id="piDbSize">--</div></div>
+              <div class="qcell"><div class="k">AI IMAGES</div><div class="v" id="piImgSize">--</div></div>
+              <div class="qcell"><div class="k">IMG FILES</div><div class="v" id="piImgN">--</div></div>
+            </div>
+          </div>
+
+          <div class="usec">
+            <div class="h">NETWORK</div>
+            <div class="qgrid">
+              <div class="qcell"><div class="k" id="piNetIf">LINK</div><div class="v" id="piNetSpeed">--</div></div>
+              <div class="qcell"><div class="k">RX</div><div class="v" id="piNetRx">--</div></div>
+              <div class="qcell"><div class="k">TX</div><div class="v" id="piNetTx">--</div></div>
+            </div>
+            <div class="piident"><div class="sub" id="piNetAddr">--</div></div>
+          </div>
+
+          <div class="usec">
+            <div class="h">ARCHIVE GROWTH</div>
+            <div class="qgrid">
+              <div class="qcell"><div class="k">PULLED</div><div class="v" id="piGrowPulled">--</div></div>
+              <div class="qcell"><div class="k">SYNTHESIZED</div><div class="v" id="piGrowEnr">--</div></div>
+              <div class="qcell"><div class="k">VAULT FILES</div><div class="v" id="piGrowVault">--</div></div>
             </div>
           </div>
 
@@ -1635,6 +1671,30 @@ function renderPi(host){
   $("piTemp").innerHTML = (host.temp_c==null?"--":Math.round(host.temp_c))+"<small>&deg;C</small>";
   $("piLoad").textContent = host.load1==null ? "--" : host.load1.toFixed(2);
   $("piUp").textContent = fmtUp(num(host.uptime_s,null));
+  /* temp zone chips */
+  var zs=Array.isArray(host.temp_zones)?host.temp_zones:[], zh=[];
+  for(var zi=0;zi<zs.length;zi++) zh.push('<span class="z">'+esc(zs[zi].name)+' <b>'+Math.round(zs[zi].c)+'&deg;</b></span>');
+  $("piZones").innerHTML=zh.join("");
+  /* storage */
+  $("piDiskModel").textContent = host.disk_model ? ("NVME: "+host.disk_model) : "";
+  bar($("fPiDisk2"),$("vPiDisk2"), (dU!=null&&dT)?dU/dT*100:null,
+      dU==null?"--":(Math.round(dU)+" / "+Math.round(dT)+" GB"));
+  var gr=host.growth||{};
+  $("piDbSize").innerHTML = gr.db_mb!=null ? (gr.db_mb<1000?gr.db_mb+"<small>MB</small>":(gr.db_mb/1000).toFixed(1)+"<small>GB</small>") : "--";
+  $("piImgSize").innerHTML = gr.images_mb!=null ? (gr.images_mb<1000?Math.round(gr.images_mb)+"<small>MB</small>":(gr.images_mb/1000).toFixed(1)+"<small>GB</small>") : "--";
+  $("piImgN").textContent = gr.images_n!=null ? gr.images_n : "--";
+  /* network */
+  var net=host.net||{};
+  $("piNetIf").textContent = net.iface ? (net.wireless?"WIFI ":"ETH ")+net.iface.toUpperCase() : "LINK";
+  $("piNetSpeed").innerHTML = net.speed_mb ? (net.speed_mb>=1000?(net.speed_mb/1000)+"<small>GBE</small>":net.speed_mb+"<small>MB</small>") : "--";
+  function bps(v){ if(v==null) return "--"; if(v>=1e6) return (v/1e6).toFixed(1)+"<small>MB/S</small>"; if(v>=1e3) return Math.round(v/1e3)+"<small>KB/S</small>"; return Math.round(v)+"<small>B/S</small>"; }
+  $("piNetRx").innerHTML=bps(net.rx_bps); $("piNetTx").innerHTML=bps(net.tx_bps);
+  $("piNetAddr").textContent = net.addr ? ("ADDR "+net.addr+"  ·  TUNNEL warboard.semfreak.dev") : "";
+  /* archive growth — workload totals come from the same stats payload */
+  var stAll=S.stats||{}, cAll=stAll.counts||{}, mAll=stAll.meta||{};
+  $("piGrowPulled").textContent = num(cAll.items_total,null)!=null ? cAll.items_total.toLocaleString("en-US") : "--";
+  $("piGrowEnr").textContent = num(mAll.items_enriched_total,null)!=null ? Number(mAll.items_enriched_total).toLocaleString("en-US") : "--";
+  $("piGrowVault").textContent = num(mAll.vault_digests_total,null)!=null ? mAll.vault_digests_total : "--";
 }
 function setUnitTab(pi){
   S.unitTab = pi ? "pi" : "tiiny";

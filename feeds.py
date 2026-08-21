@@ -40,6 +40,21 @@ MAX_BODY = 4 * 1024 * 1024
 _SAFE_URL = re.compile(r"^https?://", re.I)
 
 FEEDS = [
+    # wave 2 (2026-08-21): weather, seismic, volcanic, disaster, cyber, defense,
+    # aviation, energy — all verified live before shipping
+    {"name": "NWS Severe Alerts", "url": "https://api.weather.gov/alerts/active.atom?severity=Severe,Extreme", "kind": "atom"},
+    {"name": "USGS Quakes M2.5+", "url": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.atom", "kind": "atom"},
+    {"name": "GDACS Disasters", "url": "https://www.gdacs.org/xml/rss.xml", "kind": "rss"},
+    {"name": "Smithsonian Volcanoes", "url": "https://volcano.si.edu/news/WeeklyVolcanoRSS.xml", "kind": "rss"},
+    {"name": "The Hacker News", "url": "https://feeds.feedburner.com/TheHackersNews", "kind": "rss"},
+    {"name": "BleepingComputer", "url": "https://www.bleepingcomputer.com/feed/", "kind": "rss"},
+    {"name": "Krebs on Security", "url": "https://krebsonsecurity.com/feed/", "kind": "rss"},
+    {"name": "Breaking Defense", "url": "https://breakingdefense.com/feed/", "kind": "rss"},
+    {"name": "The War Zone", "url": "https://www.twz.com/feed", "kind": "rss"},
+    {"name": "NYT World", "url": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml", "kind": "rss"},
+    {"name": "Sky News World", "url": "https://feeds.skynews.com/feeds/rss/world.xml", "kind": "rss"},
+    {"name": "AVweb Aviation", "url": "https://www.avweb.com/feed/", "kind": "rss"},
+    {"name": "OilPrice Energy", "url": "https://oilprice.com/rss/main", "kind": "rss"},
     {"name": "BBC World", "url": "https://feeds.bbci.co.uk/news/world/rss.xml", "kind": "rss"},
     {"name": "Guardian World", "url": "https://www.theguardian.com/world/rss", "kind": "rss"},
     {"name": "Al Jazeera", "url": "https://www.aljazeera.com/xml/rss/all.xml", "kind": "rss"},
