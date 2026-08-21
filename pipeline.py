@@ -187,6 +187,9 @@ def _spawn(name, body, interval):
 # 1. fetcher
 # --------------------------------------------------------------------------- #
 
+_prev_feed_errors = set()
+
+
 def fetch_body(con):
     t0 = time.time()
     res = feeds.fetch_all(con) or {}
@@ -199,8 +202,15 @@ def fetch_body(con):
         if new:
             db.add_event(con, "FETCH", "+%d new items from %d sources"
                          % (new, checked))
-        for name, msg in errors.items():
-            db.add_event(con, "ERROR", "feed %s: %s" % (name, str(msg)[:80]))
+        # log feed failures on state CHANGE only — a persistently-down feed
+        # spamming the ops log every cycle buries real events
+        global _prev_feed_errors
+        cur = set(errors)
+        for name in cur - _prev_feed_errors:
+            db.add_event(con, "ERROR", "feed %s DOWN: %s" % (name, str(errors[name])[:80]))
+        for name in _prev_feed_errors - cur:
+            db.add_event(con, "FETCH", "feed %s recovered" % name)
+        _prev_feed_errors = cur
     except Exception:
         pass
     detail = ""

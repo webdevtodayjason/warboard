@@ -64,7 +64,8 @@ FEEDS = [
     # site itself advertises via <link rel="alternate">.
     {"name": "Kyiv Independent", "url": "https://kyivindependent.com/news-archive/rss/",
      "kind": "rss"},
-    {"name": "Times of Israel", "url": "https://www.timesofisrael.com/feed/", "kind": "rss"},
+    # Times of Israel 403s all UAs since 2026-08-21 (CDN bot-blocking); JPost covers the beat
+    {"name": "Jerusalem Post", "url": "https://www.jpost.com/rss/rssfeedsfrontpage.aspx", "kind": "rss"},
     # NOTE: NHK World English RSS is gone (both /nhkworld/en/news/rss/all.xml and
     # /nhkworld/en/rss/news.xml return 404). Channel NewsAsia replaces it as the
     # INDOPACOM wire.
