@@ -417,6 +417,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.r_cam_stream()
             if path == "/cam.jpg":
                 return self.r_cam_snapshot()
+            if path == "/og.png":
+                try:
+                    with open(os.path.join(BASE_DIR, "static", "og.png"), "rb") as f:
+                        return self.send_bytes(200, f.read(), "image/png")
+                except OSError:
+                    return self.json(404, {"error": "not found"})
             if path == "/favicon.ico":
                 return self.send_bytes(204, b"", "image/x-icon")
             return self.json(404, {"error": "not found"})

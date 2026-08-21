@@ -4,7 +4,23 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>WARBOARD — TIINY OSINT</title>
+<title>WARBOARD — live OSINT world-news board, AI'd entirely on a pocket NPU</title>
+<meta name="description" content="A 24/7 world-news intelligence board where every drop of AI runs on a pocket-sized Tiiny NPU device: Ornith-35B reads and grades the headlines, Qwen embeddings cluster developing stories, Z-Image-Turbo paints the news on demand. 14 feeds, no cloud, one device, three models.">
+<link rel="canonical" href="https://warboard.semfreak.dev/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="WARBOARD">
+<meta property="og:title" content="WARBOARD — live OSINT world news, AI'd entirely on a pocket NPU">
+<meta property="og:description" content="Ornith-35B reads and grades world headlines, Qwen embeddings cluster developing stories, Z-Image-Turbo paints the news — all three models resident on one Tiiny Pocket edge device. Live 24/7 with device telemetry and a rack cam.">
+<meta property="og:url" content="https://warboard.semfreak.dev/">
+<meta property="og:image" content="https://warboard.semfreak.dev/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="WARBOARD — live OSINT world news, AI'd entirely on a pocket NPU">
+<meta name="twitter:description" content="Three AI models on one pocket device read, grade, cluster, and illustrate the world's news in real time. No cloud.">
+<meta name="twitter:image" content="https://warboard.semfreak.dev/og.png">
+<meta name="theme-color" content="#0a0c10">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230a0c10'/%3E%3Crect x='2' y='2' width='6' height='6' fill='%23c8372d'/%3E%3Crect x='8' y='8' width='6' height='6' fill='%23c8372d'/%3E%3C/svg%3E">
 <!-- inline favicon: keeps the server log free of /favicon.ico 404s -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230a0c10'/%3E%3Cpath d='M4 4h12v12H4zM16 16h12v12H16z' fill='%23c8372d'/%3E%3C/svg%3E">
 <style>
@@ -297,6 +313,27 @@ canvas{display:block;max-width:100%;min-width:0}
 .dsib li{padding:7px 0;border-bottom:1px dashed #1a1f29;font-size:11.5px;line-height:1.45;cursor:pointer;color:#9aa4b8}
 .dsib li:hover{color:#e8ebf2}
 .dsib li .s{color:#5c667a;font-size:9.5px;margin-right:8px}
+/* mission button + about panel */
+.mission{font:inherit;font-size:9.5px;letter-spacing:.12em;cursor:pointer;margin-left:14px;
+  background:#181320;border:1px solid #c8372d;border-radius:3px;color:#e8ebf2;padding:4px 12px;
+  text-transform:uppercase;box-shadow:0 0 8px rgba(200,55,45,.25)}
+.mission:hover{background:#c8372d;color:#0a0c10}
+.panel.about{display:none}
+.xbody .panel.about{display:block}
+.abody{padding:6px 22px 18px;font-size:13px;line-height:1.75;color:#b9c0cf}
+.abody .lead p:first-child{font-size:16px;color:#e8ebf2;letter-spacing:.02em}
+.abody .asec{padding:14px 0;border-bottom:1px solid #14181f}
+.abody .asec:last-child{border-bottom:none}
+.abody .h{font-size:10px;letter-spacing:.16em;color:#c8372d;margin-bottom:8px}
+.abody p{margin:0 0 10px}
+.abody ul{margin:8px 0;padding-left:20px}
+.abody li{margin:7px 0}
+.abody a{color:#d9a441;text-decoration:none}
+.abody a:hover{text-decoration:underline}
+.abody .abtn{display:inline-block;border:1px solid #3a2226;border-radius:3px;padding:9px 16px;
+  font-size:10.5px;letter-spacing:.1em;color:#c8372d;margin-bottom:12px}
+.abody .abtn:hover{background:#c8372d;color:#0a0c10;text-decoration:none}
+.abody .fine{font-size:11px;color:#5c667a}
 /* panel expand modal */
 .xpand{font:inherit;font-size:11px;cursor:pointer;background:none;border:none;color:#3f4a5a;
   padding:0 6px;margin-left:6px;line-height:1}
@@ -482,6 +519,7 @@ canvas{display:block;max-width:100%;min-width:0}
       <span class="glyph">&#9626;</span>
       <h1>WARBOARD</h1>
       <span class="sub"><span class="livedot"></span>TIINY OSINT // LIVE</span>
+      <button class="mission" id="missionBtn" type="button">&#9626; THE MISSION</button>
     </div>
 
     <div class="leds">
@@ -720,6 +758,51 @@ canvas{display:block;max-width:100%;min-width:0}
     </span>
   </footer>
 </div>
+
+<section class="panel about">
+  <div class="pbody abody">
+    <div class="asec lead">
+      <p><b>One pocket-sized AI appliance. Seven days. The entire world's news cycle.</b></p>
+      <p>WARBOARD is a live stress test disguised as an intelligence terminal. We took a
+      <a href="https://tiiny.ai/" target="_blank" rel="noopener noreferrer">Tiiny Pocket</a> —
+      a palm-sized edge device with an NPU — and instead of benchmarking it with synthetic
+      loops, we gave it a job a real operations team would recognize: read everything,
+      miss nothing, around the clock, for a week straight.</p>
+    </div>
+    <div class="asec">
+      <div class="h">THE JOB</div>
+      <p>Fourteen free OSINT feeds — world wires, conflict reporting, CISA cyber advisories,
+      seismic alerts, humanitarian updates — pour in 24/7. Every single item is processed
+      <b>on the device</b>. No cloud API is called. Ever.</p>
+      <ul>
+        <li><b>ORNITH-1.0-35B</b> reads each story and writes the one-line analysis: category, combatant-command region, severity S1–S5.</li>
+        <li><b>QWEN3-EMBEDDING</b> converts every item to vectors; cosine clustering fuses cross-source coverage into DEVELOPING stories, which Ornith then titles.</li>
+        <li><b>Z-IMAGE-TURBO</b> paints a photorealistic editorial image for any article you click — 8 diffusion steps, ~8 seconds, rendered by the same pocket NPU.</li>
+      </ul>
+      <p>All three models are resident simultaneously — 83 of the device's 100 NPU units —
+      scheduled around each other in real time. You can watch it think in the AI OPS LOG.</p>
+    </div>
+    <div class="asec">
+      <div class="h">THE TEST</div>
+      <p>This is a kick-the-tires endurance run: does an edge AI appliance hold up under
+      sustained, unattended, production-shaped load for seven days? Thermals, throughput,
+      memory, network, model stability — all of it is on this board, live, warts and all.
+      The hardware panel is the telemetry; the wire is the proof of work.</p>
+    </div>
+    <div class="asec">
+      <div class="h">THE RIG</div>
+      <p>Tiiny Pocket (CIX NPU, 49GB device memory) does the thinking. An Orange Pi 6 Plus
+      in the server rack runs ingestion, this dashboard, the IR rack camera, and the
+      Cloudflare tunnel. Backend is pure Python stdlib. The front end is one file.</p>
+    </div>
+    <div class="asec credits">
+      <a class="abtn" href="https://github.com/webdevtodayjason/warboard" target="_blank" rel="noopener noreferrer">PROJECT SOURCE — GITHUB/WEBDEVTODAYJASON/WARBOARD</a>
+      <p class="fine">Built by <a href="https://github.com/webdevtodayjason" target="_blank" rel="noopener noreferrer">Jason Brashear</a> (Titanium Computing).
+      Equipment credit: <a href="https://tiiny.ai/" target="_blank" rel="noopener noreferrer">Tiiny AI</a> — the Pocket unit under test is theirs, the beatings it takes here are ours.
+      News content belongs to the cited sources; summaries, severity grades, and images are AI-generated on-device and can be wrong.</p>
+    </div>
+  </div>
+</section>
 
 <div class="xback" id="xback"></div>
 <div class="xmodal" id="xmodal" role="dialog" aria-modal="true">
@@ -1766,6 +1849,7 @@ function boot(){
       ev.stopPropagation(); expandPanel(b.getAttribute("data-x"), b.getAttribute("data-t"));
     });})(xps[xi]);
   }
+  $("missionBtn").addEventListener("click",function(){ expandPanel(".panel.about","THE MISSION — WHAT IS WARBOARD?"); });
   $("xclose").addEventListener("click",closeExpand);
   $("xback").addEventListener("click",closeExpand);
 

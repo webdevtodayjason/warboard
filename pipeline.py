@@ -37,7 +37,7 @@ import feeds  # noqa: E402
 DB_PATH = os.environ.get("WARBOARD_DB") or os.path.join(BASE_DIR, "warboard.db")
 
 FETCH_INTERVAL = float(os.environ.get("WARBOARD_FETCH_INTERVAL", "300"))
-DEVICE_INTERVAL = 30.0
+DEVICE_INTERVAL = 5.0   # 8s image-gen spikes fall through a 30s net (Jason caught the dead needle)
 JANITOR_INTERVAL = 3600.0
 
 ENRICH_BATCH = 20
