@@ -17,33 +17,27 @@ gw() { curl -s -m5 -o /tmp/wake-roster.json -w "%{http_code}" \
 
 code=$(gw)
 
-# Gateway dark => volume is locked. Try the documented login on every base the
-# firmware might expose it on (port 80 vhost per the SDK docs, plus direct ports).
-if [ "$code" != "200" ] && [ -n "${TIINY_USER:-}" ] && [ -n "${TIINY_PASS:-}" ]; then
-  body=$(printf '{"username":"%s","password":"%s"}' "$TIINY_USER" "$TIINY_PASS")
-  for attempt in \
-      "http://$H/api/v1/auth/login|auth.api.tiiny.local" \
-      "http://$H/api/v1/auth/login|" \
-      "http://$H:8888/api/v1/auth/login|" \
-      "http://$H:9080/api/v1/auth/login|" \
-      "http://$H:8800/api/v1/auth/login|" ; do
-    url="${attempt%%|*}"; host="${attempt##*|}"
-    if [ -n "$host" ]; then
-      r=$(curl -s -m10 -w "\n%{http_code}" -X POST -H "Host: $host" \
-           -H "Content-Type: application/json" -d "$body" "$url" 2>/dev/null)
-    else
-      r=$(curl -s -m10 -w "\n%{http_code}" -X POST \
-           -H "Content-Type: application/json" -d "$body" "$url" 2>/dev/null)
-    fi
-    rc="${r##*$'\n'}"
-    case "$rc" in
-      200|201|204)
-        echo "$(date -u +%FT%TZ) auth/login OK via $url (host=${host:-none})" >> /var/log/warboard-wake.log
-        sleep 20   # give authd time to open the volume and start compose
-        break ;;
-    esac
-  done
-  code=$(gw)
+# Gateway dark => the encrypted data volume is closed. The desktop app normally
+# opens it on connect; headless, nobody does, so we call authd ourselves.
+# Learned the hard way: authd listens on 127.0.0.1:6666 ONLY (nginx :80 502s for
+# this path), so the call must run ON the device over ssh. Payload is
+# {"password": "<master password>"}; success returns an attestation token and
+# /dev/mapper/userdata_crypt appears, which starts the compose stack.
+if [ "$code" != "200" ] && [ -n "${TIINY_PASS:-}" ]; then
+  body=$(P="$TIINY_PASS" python3 -c "import json,os;print(json.dumps({'password':os.environ['P']}))")
+  resp=$(printf '%s' "$body" | ssh -i /etc/warboard-tiiny.key -p 3588 -o BatchMode=yes \
+      -o StrictHostKeyChecking=no -o ConnectTimeout=8 "tiiny@$H" \
+      "curl -s -m15 -X POST -H 'Content-Type: application/json' -d @- http://127.0.0.1:6666/api/v1/account/auth" 2>/dev/null)
+  case "$resp" in
+    *attestation*)
+      echo "$(date -u +%FT%TZ) authd unlock OK — waiting for compose stack" >> /var/log/warboard-wake.log
+      for _ in $(seq 1 30); do
+        sleep 10
+        code=$(gw); [ "$code" = "200" ] && break
+      done ;;
+    *)
+      echo "$(date -u +%FT%TZ) authd unlock failed: ${resp:0:120}" >> /var/log/warboard-wake.log ;;
+  esac
 fi
 
 [ "$code" = "200" ] || exit 0   # still locked/offline — try again next tick
