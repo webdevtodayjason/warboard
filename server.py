@@ -548,6 +548,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.r_cam_stream()
             if path == "/cam.jpg":
                 return self.r_cam_snapshot()
+            if path == "/api/episodes":
+                return self.r_episodes()
             if path == "/feed.xml" or path == "/podcast.xml":
                 return self.r_feed()
             if path.startswith("/episodes/"):
@@ -760,6 +762,18 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             con.close()
         return out
+
+    def r_episodes(self):
+        """Episode list for the on-page player (newest first)."""
+        eps = []
+        for e in self._episode_list()[:20]:
+            eps.append({"day": e["day"], "title": e["title"],
+                        "desc": (e.get("desc") or "")[:400],
+                        "seconds": round(e.get("seconds") or 0, 1),
+                        "bytes": e.get("bytes"),
+                        "url": "/episodes/%s.mp3" % e["day"],
+                        "cdn": e.get("url")})
+        self.json(200, {"episodes": eps, "feed": "/feed.xml"})
 
     def r_feed(self):
         try:

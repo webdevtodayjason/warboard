@@ -7,6 +7,7 @@
 <title>WARBOARD — live OSINT world-news board, AI'd entirely on a pocket NPU</title>
 <meta name="description" content="A 24/7 world-news intelligence board where every drop of AI runs on a pocket-sized Tiiny NPU device: Ornith-35B reads and grades the headlines, Qwen embeddings cluster developing stories, Z-Image-Turbo paints the news on demand. 14 feeds, no cloud, one device, three models.">
 <link rel="canonical" href="https://warboard.semfreak.dev/">
+<link rel="alternate" type="application/rss+xml" title="WARBOARD Daily Brief (podcast)" href="/feed.xml">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="WARBOARD">
 <meta property="og:title" content="WARBOARD — live OSINT world news, AI'd entirely on a pocket NPU">
@@ -374,6 +375,35 @@ a.nm.hf:hover{color:#e8ebf2;border-bottom-color:#c8372d}
   font-size:10.5px;letter-spacing:.1em;color:#c8372d;margin-bottom:12px}
 .abody .abtn:hover{background:#c8372d;color:#0a0c10;text-decoration:none}
 .abody .fine{font-size:11px;color:#5c667a}
+/* audio brief player — floating, draggable, remembers where you left it */
+.mission.play{border-color:#2fa96d;box-shadow:0 0 8px rgba(47,169,109,.25)}
+.mission.play:hover{background:#2fa96d;color:#0a0c10}
+.player{position:fixed;left:auto;right:22px;bottom:56px;width:330px;z-index:75;
+  background:#0d1017;border:1px solid #2a3040;border-radius:8px;
+  box-shadow:0 18px 50px rgba(0,0,0,.6);display:none}
+.player.on{display:block}
+.phead{display:flex;align-items:center;gap:7px;padding:8px 10px;border-bottom:1px solid #1d222e;cursor:grab}
+.phead:active{cursor:grabbing}
+.phead .bar{width:3px;height:12px;background:#2fa96d;box-shadow:0 0 8px #2fa96d}
+.phead .t{font-size:9.5px;letter-spacing:.14em;color:#9aa4b8}
+.phead .grip{margin-left:auto;color:#3f4a5a;font-size:10px;letter-spacing:-2px}
+.pclose{background:none;border:none;color:#5c667a;font-size:15px;cursor:pointer;padding:0 2px;line-height:1}
+.pclose:hover{color:#c8372d}
+.pbodyx{padding:10px 12px 12px}
+.pttl{font-size:12.5px;line-height:1.45;color:#e8ebf2;margin-bottom:5px}
+.pmeta{display:flex;gap:9px;align-items:center;font-size:9px;letter-spacing:.08em;color:#5c667a;margin-bottom:8px;flex-wrap:wrap}
+.pmeta .ondev{color:#2fa96d;border:1px solid #1d3a2a;border-radius:20px;padding:1px 7px}
+#pAudio{width:100%;height:32px;filter:invert(.92) hue-rotate(180deg) saturate(.4)}
+.pfoot{display:flex;gap:8px;align-items:center;margin-top:8px}
+#pPick{flex:1;min-width:0;font:inherit;font-size:10px;background:#0a0c10;color:#9aa4b8;
+  border:1px solid #1d222e;border-radius:3px;padding:4px 6px}
+.pfoot a{font-size:9.5px;letter-spacing:.08em;color:#d9a441;text-decoration:none;white-space:nowrap}
+.pfoot a:hover{color:#e8ebf2}
+@media(max-width:620px){
+  .player{right:8px;left:8px;width:auto;bottom:8px}
+  .phead{cursor:default}
+  .phead .grip{display:none}
+}
 /* panel expand modal */
 .xpand{font:inherit;font-size:11px;cursor:pointer;background:none;border:none;color:#3f4a5a;
   padding:0 6px;margin-left:6px;line-height:1}
@@ -653,6 +683,7 @@ a.nm.hf:hover{color:#e8ebf2;border-bottom-color:#c8372d}
       <h1>WARBOARD</h1>
       <span class="sub"><span class="livedot"></span>TIINY OSINT // LIVE</span>
       <button class="mission" id="missionBtn" type="button">&#9626; THE MISSION</button>
+      <button class="mission play" id="playBtn" type="button" title="Play the latest on-device audio brief">&#9654; LATEST BRIEF</button>
     </div>
 
     <div class="leds">
@@ -941,6 +972,7 @@ a.nm.hf:hover{color:#e8ebf2;border-bottom-color:#c8372d}
     <span class="st fnote"><span class="kbd">1-6</span>AOR <span class="kbd">0</span>CLEAR <span class="kbd">R</span>SYNC <span class="kbd">F</span>FULLSCREEN</span>
     <span class="st right">
       <span id="sbLink">LINK --</span>&nbsp;//&nbsp;
+      <a class="sbgh" href="/feed.xml" title="podcast RSS">PODCAST</a>&nbsp;//&nbsp;
       <a class="sbgh" href="https://github.com/webdevtodayjason/warboard" target="_blank" rel="noopener noreferrer">GITHUB/WARBOARD</a>&nbsp;//&nbsp;
       <span class="sbpow">AI BY
         <a href="https://tiiny.ai/" target="_blank" rel="noopener noreferrer" title="Tiiny AI" class="tlogo"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 120 42" height="13" width="37" aria-label="Tiiny"><g><path fill="currentColor" d="M42.8636 0H36.4341V5.68257H42.8636V0Z"/><path fill="currentColor" d="M62.1431 9.86291V11.3701V30.6261H68.5726V11.3701H75.0022V5.6875H62.1431V9.86291Z"/><path fill="currentColor" d="M42.8636 11.3691H36.4341V30.6207H42.8636V11.3691Z"/><path fill="currentColor" d="M107.141 36.3184H94.2817V42.0009H107.141V36.3184Z"/><path fill="currentColor" d="M75.0022 17.0563H81.4317V30.6252H87.8613V17.0563V15.5491V11.3691H75.0022V17.0563Z"/><path fill="currentColor" d="M55.7228 11.3691H49.2932V30.6207H55.7228V11.3691Z"/><path fill="currentColor" d="M120 5.6875H113.57V30.6261H107.141V24.939H100.711V5.6875H94.2817V24.939V26.4462V30.6261H107.141V36.3087H113.57V30.6261H120V5.6875Z"/><path fill="currentColor" d="M55.7228 0H49.2932V5.68257H55.7228V0Z"/><path fill="currentColor" d="M0 0V5.68257H1.18103H12.8591V0H1.18103H0Z"/><path fill="currentColor" d="M19.2887 0V5.68257H30.9668H32.1478V0H30.9668H19.2887Z"/><path fill="currentColor" d="M19.2887 5.6875H12.8591V30.6261H19.2887V5.6875Z"/></g></svg></a>
@@ -993,6 +1025,24 @@ a.nm.hf:hover{color:#e8ebf2;border-bottom-color:#c8372d}
     </div>
   </div>
 </section>
+
+<aside class="player" id="player" aria-label="audio brief player">
+  <div class="phead" id="pdrag">
+    <span class="bar"></span>
+    <span class="t">AUDIO BRIEF</span>
+    <span class="grip" title="drag me">&#8942;&#8942;</span>
+    <button class="pclose" id="pclose" type="button" title="close">&times;</button>
+  </div>
+  <div class="pbodyx">
+    <div class="pttl" id="pTitle">loading…</div>
+    <div class="pmeta"><span id="pDay"></span><span id="pDur"></span><span class="ondev">SPOKEN ON-DEVICE</span></div>
+    <audio id="pAudio" controls preload="none"></audio>
+    <div class="pfoot">
+      <select id="pPick" title="choose an episode"></select>
+      <a href="/feed.xml" id="pFeed" title="subscribe in a podcast app">&#128225; RSS</a>
+    </div>
+  </div>
+</aside>
 
 <div class="xback" id="xback"></div>
 <div class="xmodal" id="xmodal" role="dialog" aria-modal="true">
@@ -1653,6 +1703,78 @@ function renderSitrep(meta){
   $("sitrepBody").innerHTML='<div>'+esc(s)+'</div>';
   $("sitrepAge").textContent=ts?("FILED "+ago(ts).toUpperCase()):"";
 }
+/* ── AUDIO BRIEF PLAYER ─────────────────────────────────────────────────── */
+var PL={eps:[],loaded:false};
+function fmtDur(s){ s=Math.round(s||0); var m=Math.floor(s/60); return m+":"+String(s%60).padStart(2,"0"); }
+function pickEpisode(day){
+  var ep=null;
+  for(var i=0;i<PL.eps.length;i++){ if(PL.eps[i].day===day){ ep=PL.eps[i]; break; } }
+  if(!ep) ep=PL.eps[0];
+  if(!ep) return;
+  $("pTitle").textContent=ep.title||("Brief "+ep.day);
+  $("pDay").textContent=ep.day;
+  $("pDur").textContent=ep.seconds?fmtDur(ep.seconds):"";
+  var a=$("pAudio");
+  if(a.getAttribute("data-day")!==ep.day){
+    a.src=ep.url; a.setAttribute("data-day",ep.day);
+  }
+  $("pPick").value=ep.day;
+}
+function openPlayer(){
+  $("player").classList.add("on");
+  if(PL.loaded){ if(PL.eps.length) $("pAudio").play().catch(function(){}); return; }
+  $("pTitle").textContent="fetching episodes…";
+  fetch("api/episodes").then(function(r){return r.json();}).then(function(d){
+    PL.eps=d.episodes||[]; PL.loaded=true;
+    if(!PL.eps.length){ $("pTitle").textContent="No episode yet — the first brief renders after midnight UTC."; return; }
+    var sel=$("pPick"), opts=[];
+    for(var i=0;i<PL.eps.length;i++) opts.push('<option value="'+esc(PL.eps[i].day)+'">'+esc(PL.eps[i].day)+" — "+esc((PL.eps[i].title||"").slice(0,44))+"</option>");
+    sel.innerHTML=opts.join("");
+    pickEpisode(PL.eps[0].day);
+    $("pAudio").play().catch(function(){});   /* autoplay may be blocked; controls are right there */
+  }).catch(function(){ $("pTitle").textContent="Player unavailable."; });
+}
+function closePlayer(){ $("player").classList.remove("on"); try{$("pAudio").pause();}catch(e){} }
+function makeDraggable(panel, handle){
+  var sx=0, sy=0, ox=0, oy=0, dragging=false;
+  function down(e){
+    if(e.target.closest("button")) return;
+    var pt=e.touches?e.touches[0]:e;
+    var r=panel.getBoundingClientRect();
+    panel.style.left=r.left+"px"; panel.style.top=r.top+"px";
+    panel.style.right="auto"; panel.style.bottom="auto";
+    sx=pt.clientX; sy=pt.clientY; ox=r.left; oy=r.top; dragging=true;
+    document.addEventListener("mousemove",move); document.addEventListener("mouseup",up);
+    document.addEventListener("touchmove",move,{passive:false}); document.addEventListener("touchend",up);
+    e.preventDefault();
+  }
+  function move(e){
+    if(!dragging) return;
+    var pt=e.touches?e.touches[0]:e;
+    var w=panel.offsetWidth, h=panel.offsetHeight;
+    /* keep it on screen no matter how enthusiastically it is flung */
+    var x=Math.min(Math.max(0, ox+pt.clientX-sx), Math.max(0,innerWidth-w));
+    var y=Math.min(Math.max(0, oy+pt.clientY-sy), Math.max(0,innerHeight-h));
+    panel.style.left=x+"px"; panel.style.top=y+"px";
+    try{ localStorage.setItem("wb.player.pos", x+","+y); }catch(err){}
+    if(e.cancelable) e.preventDefault();
+  }
+  function up(){
+    dragging=false;
+    document.removeEventListener("mousemove",move); document.removeEventListener("mouseup",up);
+    document.removeEventListener("touchmove",move); document.removeEventListener("touchend",up);
+  }
+  handle.addEventListener("mousedown",down);
+  handle.addEventListener("touchstart",down,{passive:false});
+  try{
+    var p=(localStorage.getItem("wb.player.pos")||"").split(",");
+    if(p.length===2 && innerWidth>620){
+      panel.style.left=Math.min(+p[0],innerWidth-340)+"px";
+      panel.style.top=Math.min(+p[1],innerHeight-160)+"px";
+      panel.style.right="auto"; panel.style.bottom="auto";
+    }
+  }catch(err){}
+}
 var XP={ph:null,panel:null,big:false};
 function expandPanel(sel,title){
   var p=document.querySelector(sel);
@@ -2102,6 +2224,10 @@ function boot(){
     });})(xps[xi]);
   }
   $("askForm").addEventListener("submit",askSubmit);
+  $("playBtn").addEventListener("click",openPlayer);
+  $("pclose").addEventListener("click",closePlayer);
+  $("pPick").addEventListener("change",function(){ pickEpisode(this.value); $("pAudio").play().catch(function(){}); });
+  makeDraggable($("player"), $("pdrag"));
   $("missionBtn").addEventListener("click",function(){ expandPanel(".panel.about","THE MISSION — WHAT IS WARBOARD?"); });
   $("xclose").addEventListener("click",closeExpand);
   $("xback").addEventListener("click",closeExpand);
