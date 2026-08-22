@@ -1,0 +1,424 @@
+<!doctype html><html lang=en><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>WARBOARD — How It Works</title>
+<style>
+:root{--bg:#f7f7f5;--card:#fff;--ink:#1c1c1a;--mut:#6b6b66;--line:#e3e3de;--acc:#c2410c;--accbg:#fff4ed;
+      --ok:#166534;--okbg:#f0fdf4;--info:#1e40af;--infobg:#eff6ff;--code:#f4f4f1;--wire:#94a3b8}
+@media(prefers-color-scheme:dark){:root{--bg:#161614;--card:#1f1f1c;--ink:#ececea;--mut:#a1a19a;--line:#33332e;
+      --acc:#fb923c;--accbg:#2a1a0f;--ok:#4ade80;--okbg:#122017;--info:#93c5fd;--infobg:#111a2e;
+      --code:#15151a;--wire:#5b6472}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;
+     font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+.wrap{max-width:900px;margin:0 auto;padding:34px 20px 90px}
+header{border-bottom:2px solid var(--line);padding-bottom:18px;margin-bottom:14px}
+h1{font-size:28px;margin:0 0 6px;letter-spacing:-.02em}
+.sub{color:var(--mut);font-size:14px}
+h2{font-size:19px;margin:40px 0 4px;letter-spacing:-.01em;border-top:1px solid var(--line);padding-top:26px}
+h2 .n{color:var(--acc);font-variant-numeric:tabular-nums;margin-right:8px}
+h3{font-size:15.5px;margin:20px 0 4px}
+section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:12px 0}
+p{margin:0 0 12px}
+ul{margin:8px 0;padding-left:22px}li{margin:7px 0}
+b{color:var(--ink)}
+code{background:var(--code);padding:1.5px 6px;border-radius:4px;font-size:13.5px;
+     font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:13px 15px;
+    overflow-x:auto;font-size:12.8px;line-height:1.6;margin:10px 0}
+pre code{background:none;padding:0}
+.lede{font-size:17.5px;line-height:1.6}
+.box{border-left:3px solid var(--acc);background:var(--accbg);padding:12px 15px;border-radius:0 8px 8px 0;margin:14px 0}
+.box.ok{border-color:var(--ok);background:var(--okbg)}
+.box.info{border-color:var(--info);background:var(--infobg)}
+.box .h{font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:5px;color:var(--acc)}
+.box.ok .h{color:var(--ok)}.box.info .h{color:var(--info)}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+a{color:var(--acc)}
+figure{margin:16px 0;overflow-x:auto}
+figcaption{color:var(--mut);font-size:12.5px;margin-top:8px;text-align:center}
+.toc{columns:2;column-gap:26px;font-size:14px}
+.toc a{display:block;padding:3px 0;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.foot{color:var(--mut);font-size:13px;margin-top:34px;border-top:1px solid var(--line);padding-top:16px}
+.pill{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;
+      background:var(--accbg);color:var(--acc);letter-spacing:.04em;margin-left:6px;vertical-align:middle}
+@media(max-width:600px){.toc{columns:1}}
+svg{max-width:100%;height:auto;display:block;margin:0 auto}
+</style></head><body><div class=wrap>
+
+<header>
+<h1>WARBOARD — How It Works</h1>
+<div class=sub>The engineering behind a 24/7 OSINT intelligence board whose entire AI stack runs on a
+palm-sized NPU appliance · Jason Brashear (Titanium Computing) · 2026-08-21<br>
+Live: <a href="https://warboard.semfreak.dev">warboard.semfreak.dev</a> ·
+Source: <a href="https://github.com/webdevtodayjason/warboard">github.com/webdevtodayjason/warboard</a> ·
+Companion: <a href="https://artifacts.semfreak.dev/a/tiiny/warboard-postmortem/">Post-Mortem &amp; Runbook</a></div>
+</header>
+
+<p class=lede>Three AI models sharing one NPU. Twenty-seven news feeds. A public URL with no open ports.
+A database that fits in a phone photo. Every piece of this is deliberately, almost aggressively boring
+technology — and that is why it survived a night of hardware chaos and kept publishing.</p>
+
+<section class=toc>
+<a href="#map">1. The whole system on one page</a>
+<a href="#net">2. Networking: a cable and an outbound tunnel</a>
+<a href="#npu">3. Three models on one NPU</a>
+<a href="#enrich">4. The enrichment pipeline</a>
+<a href="#cluster">5. Clustering: the 0.80 threshold we measured</a>
+<a href="#image">6. Painting the news</a>
+<a href="#vault">7. The on-device archive</a>
+<a href="#ops">8. Making the AI legible</a>
+<a href="#cam">9. The rack camera</a>
+<a href="#heal">10. Self-healing</a>
+<a href="#constraints">11. The constraints that paid off</a>
+</section>
+
+<h2 id=map><span class=n>1</span>The whole system on one page</h2>
+<section>
+<figure>
+<svg viewBox="0 0 860 430" role="img" aria-label="WARBOARD architecture diagram">
+<defs>
+<marker id="ah" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+  <path d="M0,0 L0,6 L8,3 z" fill="var(--wire)"/></marker>
+<marker id="aha" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+  <path d="M0,0 L0,6 L8,3 z" fill="var(--acc)"/></marker>
+</defs>
+<style>
+.bx{fill:var(--card);stroke:var(--line);stroke-width:1.5;rx:8}
+.bxa{fill:var(--accbg);stroke:var(--acc);stroke-width:1.5;rx:8}
+.lbl{font:600 12px ui-monospace,Menlo,monospace;fill:var(--ink)}
+.sm{font:10.5px ui-monospace,Menlo,monospace;fill:var(--mut)}
+.ln{stroke:var(--wire);stroke-width:1.6;fill:none;marker-end:url(#ah)}
+.lna{stroke:var(--acc);stroke-width:2;fill:none;marker-end:url(#aha)}
+.zone{fill:none;stroke:var(--line);stroke-width:1;stroke-dasharray:4 4;rx:10}
+.zt{font:600 10px ui-monospace,Menlo,monospace;fill:var(--mut);letter-spacing:.08em}
+</style>
+
+<!-- internet zone -->
+<rect class="zone" x="8" y="8" width="240" height="150"/>
+<text class="zt" x="18" y="26">PUBLIC INTERNET</text>
+<rect class="bx" x="24" y="38" width="200" height="42"/>
+<text class="lbl" x="36" y="58">27 OSINT feeds</text>
+<text class="sm" x="36" y="72">RSS · Atom · RDF</text>
+<rect class="bx" x="24" y="98" width="200" height="46"/>
+<text class="lbl" x="36" y="118">Cloudflare edge</text>
+<text class="sm" x="36" y="132">warboard.semfreak.dev</text>
+
+<!-- rack zone -->
+<rect class="zone" x="272" y="8" width="304" height="414"/>
+<text class="zt" x="284" y="26">SERVER RACK</text>
+
+<rect class="bx" x="288" y="40" width="272" height="150"/>
+<text class="lbl" x="300" y="60">Orange Pi 6 Plus</text>
+<text class="sm" x="300" y="74">Ubuntu · 12 cores · Python stdlib only</text>
+<rect class="bx" x="300" y="84" width="118" height="30"/>
+<text class="sm" x="310" y="103">pipeline.py</text>
+<rect class="bx" x="430" y="84" width="118" height="30"/>
+<text class="sm" x="440" y="103">server.py :8811</text>
+<rect class="bx" x="300" y="120" width="118" height="30"/>
+<text class="sm" x="310" y="139">cloudflared</text>
+<rect class="bx" x="430" y="120" width="118" height="30"/>
+<text class="sm" x="440" y="139">ustreamer :8812</text>
+<rect class="bx" x="300" y="156" width="248" height="26"/>
+<text class="sm" x="310" y="173">SQLite (WAL) · items · clusters · metrics · oplog</text>
+
+<!-- tiiny -->
+<rect class="bxa" x="288" y="238" width="272" height="168"/>
+<text class="lbl" x="300" y="258">Tiiny Pocket <tspan class="sm">— all AI, no cloud</tspan></text>
+<text class="sm" x="300" y="274">NPU 100 units · 49 GB device memory</text>
+<rect class="bx" x="300" y="284" width="248" height="30"/>
+<text class="sm" x="310" y="303">Ornith-1.0-35B — analysis · 50u</text>
+<rect class="bx" x="300" y="320" width="248" height="30"/>
+<text class="sm" x="310" y="339">Qwen3-Embedding-0.6B — vectors · 1u</text>
+<rect class="bx" x="300" y="356" width="248" height="30"/>
+<text class="sm" x="310" y="375">Z-Image-Turbo — imagery · 32u</text>
+
+<!-- camera -->
+<rect class="bx" x="600" y="40" width="200" height="46"/>
+<text class="lbl" x="612" y="60">IR rack camera</text>
+<text class="sm" x="612" y="74">/dev/video4 · MJPEG</text>
+
+<!-- viewer -->
+<rect class="bx" x="600" y="120" width="200" height="46"/>
+<text class="lbl" x="612" y="140">Viewers</text>
+<text class="sm" x="612" y="154">browser · no login</text>
+
+<!-- ops -->
+<rect class="bx" x="600" y="238" width="200" height="66"/>
+<text class="lbl" x="612" y="258">Self-healing</text>
+<text class="sm" x="612" y="273">wake watchdog · 3 min</text>
+<text class="sm" x="612" y="288">unlock → load → resume</text>
+
+<!-- wires -->
+<path class="ln" d="M124,80 L124,96"/>
+<path class="ln" d="M224,60 C260,60 268,80 286,96"/>
+<text class="sm" x="228" y="52">fetch</text>
+<path class="ln" d="M124,144 C124,180 200,200 286,200"/>
+<path class="lna" d="M300,150 C240,168 150,150 128,146" />
+<text class="sm" x="150" y="176">outbound tunnel only</text>
+<path class="ln" d="M600,143 C580,143 240,143 226,124"/>
+<path class="lna" d="M424,190 L424,236"/>
+<text class="sm" x="430" y="216">USB /30 · 172.17.7.176</text>
+<path class="ln" d="M600,63 C580,63 566,100 552,132"/>
+<path class="ln" d="M600,268 C580,268 570,268 562,268"/>
+</svg>
+<figcaption>Two machines, one cable between them, and exactly zero inbound ports open anywhere.</figcaption>
+</figure>
+<p>The split is deliberate: <b>the Orange Pi does everything that is not thinking</b> — fetching, parsing,
+storing, serving, streaming, publishing — and <b>the Tiiny does nothing but think</b>. No inference call
+leaves the rack. The two talk over a cable.</p>
+</section>
+
+<h2 id=net><span class=n>2</span>Networking: a cable and an outbound tunnel</h2>
+<section>
+<h3>The data path is a USB cable, not the LAN</h3>
+<p>The Tiiny presents a USB Ethernet gadget. Plugged into the Pi, that creates a two-host network:</p>
+<pre><code>Pi   enx02ce2881f302  172.17.7.178/30  ──USB──  172.17.7.177  usb0   Tiiny</code></pre>
+<p>A <code>/30</code> is four addresses: network, two hosts, broadcast. There is no room for anyone else and
+no DHCP server involved. That decision paid for itself the same night it was made — the rack moved to a new
+subnet, the device's LAN adapter came and went, its Wi-Fi landed on a third network entirely, and the
+pipeline never noticed, because its peer address is a property of the cable rather than of the building.</p>
+
+<h3>The public URL opens no ports</h3>
+<p><code>cloudflared</code> runs on the Pi and dials <em>out</em> to Cloudflare, then serves requests back
+down that established connection. Nothing listens on the public internet; the web server is bound to
+<code>127.0.0.1:8811</code> and is not reachable from the LAN at all.</p>
+<pre><code>tunnel: c38fb8dd-…
+ingress:
+  - hostname: warboard.semfreak.dev
+    service: http://localhost:8811
+  - service: http_status:404</code></pre>
+<div class="box ok">
+<div class=h>Why this is the right shape for an appliance</div>
+<p style="margin:0">No port forwarding, no static IP, no firewall holes, no certificate management — TLS
+terminates at Cloudflare's edge. Move the hardware to a different building on a different ISP and the URL
+follows it, because the tunnel is outbound. Setup is one browser click to authorize the domain, one command
+to create the tunnel, one to route DNS.</p>
+</div>
+<p>Management access follows the same philosophy: the Pi is on a Tailscale overlay, so administration works
+from anywhere without exposing SSH. Three different network paths existed at various points tonight; the
+public board never went down.</p>
+</section>
+
+<h2 id=npu><span class=n>3</span>Three models on one NPU</h2>
+<section>
+<p>The device allocates NPU capacity in units out of 100. WARBOARD keeps three models resident
+simultaneously:</p>
+<table>
+<tr><th>Model</th><th>Units</th><th>Job</th><th>Speed</th></tr>
+<tr><td>Ornith-1.0-35B</td><td>50</td><td>Reads each article; writes summary, category, region, severity</td><td>~24–26 tok/s</td></tr>
+<tr><td>Qwen3-Embedding-0.6B</td><td>1</td><td>1,024-dim vectors for clustering and archive search</td><td>milliseconds</td></tr>
+<tr><td>Z-Image-Turbo</td><td>32</td><td>Photorealistic article imagery, 8 diffusion steps</td><td>~8 s / image</td></tr>
+</table>
+<p>That is 83 units in use with 17 spare. Loading all three is trivial; <b>using them concurrently is not.</b></p>
+<div class=box>
+<div class=h>The concurrency problem, and the lease that solves it</div>
+<p>An image request issued while the chat model is mid-inference fails with device error
+<code>150004</code>. There is no queue on the device — the application has to be the queue.</p>
+<p style="margin:0">WARBOARD coordinates through two keys in its own database. The pipeline publishes
+<code>enrich_busy_until</code> while a chat call is in flight; a viewer clicking an article takes
+<code>img_hold_until</code> before generating. Each side yields to the other's flag, and the enricher checks
+between every item rather than mid-batch, so a click waits at most one article. Idle background work — the
+hourly situation report, pre-rendering images for severe stories — honours the same lease and always loses
+to real traffic.</p>
+</div>
+<p>The result is a device that stays busy without ever colliding with itself: enrichment first, then
+reporting, then speculative imagery, and a human click preempts all of it.</p>
+</section>
+
+<h2 id=enrich><span class=n>4</span>The enrichment pipeline</h2>
+<section>
+<p>Four supervised threads, each with its own SQLite connection (WAL mode lets the web server read while the
+pipeline writes). Every loop iteration is individually wrapped: a failure logs one line and backs off
+exponentially, never killing the thread. This has to run for a week without supervision.</p>
+<pre><code>fetch    27 feeds every 5 min → dedupe by URL → insert
+enrich   serial queue → Ornith → validate → embed → cluster → metrics
+device   NPU/CPU/memory telemetry every 5 s
+vault    daily intel digest filed into the device Knowledge Base
+sitrep   hourly situation report + idle-time image pre-rendering
+janitor  prune hourly (items 21 d, metrics 8 d, oplog 48 h)</code></pre>
+
+<h3>Getting structured data out of a reasoning model</h3>
+<p>Ornith puts its chain of thought in <code>message.reasoning_content</code>, and that content
+<b>counts against <code>max_tokens</code></b>. Ask for JSON with a small budget and you get an empty
+<code>content</code> field and a <code>finish_reason</code> of <code>length</code> — the model spent the
+entire allowance thinking. The client handles it three ways: a generous 800-token budget, an explicit
+request to disable thinking, and if <code>content</code> still comes back empty, it scavenges the last
+complete JSON object out of the reasoning text.</p>
+<p>The prompt itself is a strict schema with closed enums — eleven categories, seven combatant-command
+regions, and a severity rubric written as a rubric rather than a vibe:</p>
+<pre><code>5 = mass casualty / major attack / war escalation / nuclear
+4 = significant armed action / major disaster / coup
+3 = notable political-security development
+2 = routine geopolitics or economy
+1 = low signal</code></pre>
+<p>Every field is validated after parsing; enums outside the list are rejected and severity is clamped.
+An article that fails parsing is retried, then parked with the real error message — and re-queued
+automatically after ten minutes, up to three attempts, so a transient device hiccup never permanently
+buries a story.</p>
+</section>
+
+<h2 id=cluster><span class=n>5</span>Clustering: the 0.80 threshold we measured</h2>
+<section>
+<p>When four outlets cover the same event, the board should show one developing story, not four rows. Each
+article's embedding is compared by cosine similarity against recent members of clusters touched in the last
+72 hours; above the threshold it joins, otherwise it starts a new one. Once a cluster reaches three members,
+Ornith writes it a headline.</p>
+<p>The interesting part is the threshold, which was <b>measured rather than guessed</b>. Against the live
+embedder: 89 real enriched articles off the running feed set, 3,916 real pairs, embedded exactly the way the
+pipeline does it.</p>
+<div class="box info">
+<div class=h>What the corpus showed</div>
+<p>Every pair at or above <b>0.808</b> was a genuine same-story match — ten of them, spanning BBC, Guardian,
+Al Jazeera and France24. The next pair down, 0.774, was junk: "Israeli settler attacks in the West Bank"
+against "Labour stalling on Jackdaw and Rosebank." And it sat <em>between</em> two genuine matches at 0.724
+and 0.720.</p>
+<p style="margin:0">So the 0.72–0.78 band is genuinely mixed — no threshold inside it separates signal from
+noise. 0.80 is the clean cut.</p>
+</div>
+<p>An earlier pass had lowered it to 0.72 based on a 55-pair hand-picked sample that under-represented the
+unrelated tail, and on the full corpus that put a visibly wrong story on the board. The asymmetry matters
+on a wall display: <b>a missed join just leaves two items on the wire; a false join invents a developing
+story and hangs an AI-written headline on it.</b></p>
+<p>If the embedding model is ever unavailable, clustering degrades to title-token overlap (Jaccard ≥ 0.55)
+and the board reports <code>embeddings: off</code> rather than silently changing behaviour.</p>
+</section>
+
+<h2 id=image><span class=n>6</span>Painting the news</h2>
+<section>
+<p>Click any headline and the drawer asks the device for an illustration. The call uses the native image
+route rather than the OpenAI-compatible wrapper, which lets us pass diffusion parameters directly:</p>
+<pre><code>POST /v1/image/generate
+{ "model":"Tongyi-MAI/Z-Image-Turbo", "prompt": …, "negative_prompt": …,
+  "width":512, "height":512, "seed": &lt;item id&gt;, "steps":8 }   → raw PNG</code></pre>
+<ul>
+<li><b>Seed = the article's database id</b>, so a story's image is deterministic. Regenerate it a year later
+and you get the same picture.</li>
+<li><b>512×512 is not a style choice.</b> The model card advertises 1024×1024, 768×432 and others as
+verified; on shipping firmware every size except 512×512 fails after a flat ~30 s with device error 150004,
+NPU idle. Only the native graph appears to have shipped. The board crops the square to 16:9.</li>
+<li><b>Prompting matters.</b> The first version said "editorial news illustration for this headline," and the
+model dutifully painted newspaper signage covered in garbled pseudo-text. Describing the <em>scene</em>
+instead, with writing surfaces in the negative prompt, fixed it.</li>
+<li><b>Cached forever</b> on disk, keyed by id, so a popular story costs one generation.</li>
+</ul>
+</section>
+
+<h2 id=vault><span class=n>7</span>The on-device archive</h2>
+<section>
+<p>The device has a Knowledge Base — a vault with semantic retrieval — and WARBOARD feeds it. Every day the
+pipeline writes an intelligence digest of that day's enriched items, grouped by region with the developing
+stories appended, and files it:</p>
+<pre><code>POST /kb/upload      (multipart)  → source_id
+POST /kb/finalize    {source_id}  → indexed, vectorised on-device
+POST /kb/retrieve    {question}   → semantically ranked passages</code></pre>
+<p>A public "Ask the Archive" box on the board runs that retrieval, so anyone can query months of on-device
+analysis in plain language. The vault also holds a project brief, which means the board can answer questions
+about itself.</p>
+<div class=box>
+<div class=h>A privacy boundary we had to build ourselves</div>
+<p style="margin:0"><code>/kb/retrieve</code> searches one flat namespace with no scoping parameter — user
+files, app-filed documents, and the device's automatic summaries of the owner's private chat conversations,
+all ranked together. The first public retrieval test returned a summary of a personal conversation. The
+public endpoint is now scoped server-side to WARBOARD's own filings, and the underlying gap was filed with
+the vendor as a security request: retrieval needs source filtering, per-source visibility, and conversation
+summaries private by default.</p>
+</div>
+</section>
+
+<h2 id=ops><span class=n>8</span>Making the AI legible</h2>
+<section>
+<p>An AI appliance that works silently is indistinguishable from one that has died. The board therefore
+narrates itself. A <code>now_doing</code> key holds a single human sentence for whatever is in flight, and an
+append-only <code>oplog</code> table records each completed action:</p>
+<pre><code>21:44:53  ENRICH   #342 S3 AFRICOM/disaster 24.5 tok/s — Tchad: 7M USD pour…
+21:44:46  SITREP   watch officer filed hourly SITREP (30 wire items reviewed)
+21:44:35  VAULT    filed warboard-intel-2026-08-21.md (50 entries indexed)
+21:45:24  IMAGE    auto-rendered S4+ story #330 — Kryvyi Rih shopping centre</code></pre>
+<p>Two design notes that came out of watching it run. Feed failures log on <b>state change only</b> — once
+when a source goes down, once when it recovers — because a persistently broken feed reporting every five
+minutes buries everything else. And the NPU telemetry poll had to drop from 30 s to 5 s: an image generation
+is an 8-second spike, and a 30-second sampler simply never saw it, so the gauge read zero while the device
+was at 100%.</p>
+</section>
+
+<h2 id=cam><span class=n>9</span>The rack camera</h2>
+<section>
+<p>An IR day/night USB camera watches the Tiiny while it works. <code>ustreamer</code> encodes MJPEG bound to
+loopback, and the web server proxies it — the camera is never exposed, and a dead camera returns a fast 503
+instead of hanging a browser connection.</p>
+<p>Three lessons, each a wasted half hour:</p>
+<ul>
+<li><b>Find the right node.</b> <code>/dev/video0–3</code> on this host are the SoC's hardware video codec,
+not the webcam. The camera was <code>/dev/video4</code>, and ustreamer happily streamed a "NO SIGNAL"
+placeholder from the wrong device. The service now uses the stable
+<code>/dev/v4l/by-id/…</code> path so node renumbering after a reboot cannot break it.</li>
+<li><b>Browsers never fire <code>onload</code> for <code>multipart/x-mixed-replace</code>.</b> Liveness cannot
+come from the <code>&lt;img&gt;</code> element; a separate snapshot probe is the authority, with automatic
+fallback to 1 fps snapshot polling if a CDN ever refuses the stream.</li>
+<li><b>UVC controls drift.</b> The sensor had wandered to maximum gain, gamma and backlight compensation —
+a pure white frame. Sane values are now applied by an <code>ExecStartPre=</code> line, so a restart always
+re-establishes them.</li>
+</ul>
+</section>
+
+<h2 id=heal><span class=n>10</span>Self-healing</h2>
+<section>
+<p>The deployment target is "a box in a rack that nobody visits," so every recovery path is automated.
+A systemd timer runs every three minutes and walks a ladder:</p>
+<ol>
+<li><b>Is the device's data volume open?</b> If not, unlock it. On this firmware the encrypted volume is
+opened by an authd call the desktop app normally makes — headless, nobody makes it, and the unlock endpoint
+is bound to <code>127.0.0.1</code> on the device, so the call has to originate <em>on</em> the device. The
+watchdog SSHes in with a key and does it.</li>
+<li><b>Are all three models running?</b> If not, start them and verify chat, embeddings and image generation
+each answer.</li>
+<li><b>Has the device moved?</b> A discovery sweep finds it and rewrites the configuration.</li>
+</ol>
+<p>Everything else is ordinary systemd: five units, all <code>Restart=always</code>, all enabled at boot.
+The pipeline treats device outages as expected — exponential backoff, no queue burning, automatic resume.
+Its first unattended test came the same night: a power event left the device locked, and it went from dark
+to fully operational with nobody in the room.</p>
+</section>
+
+<h2 id=constraints><span class=n>11</span>The constraints that paid off</h2>
+<section>
+<h3>Python standard library only <span class=pill>zero dependencies</span></h3>
+<p>No pip, no virtualenv, no lockfile, no supply chain. <code>sqlite3</code>, <code>urllib</code>,
+<code>xml.etree</code>, <code>http.server</code>, <code>struct</code>, <code>threading</code> — that is the
+entire stack. Deployment is copying files. Nothing can break because an upstream package changed, and there
+is no build step to fail at 3 a.m.</p>
+
+<h3>One HTML file <span class=pill>no framework</span></h3>
+<p>The board is a single self-contained document: no CDN, no bundler, no npm. Canvas sparklines and gauges
+are drawn by hand. It renders correctly with zero items and with two hundred, and it loads instantly over a
+tunnel because it is one request.</p>
+
+<h3>Security posture</h3>
+<ul>
+<li><b>The device key never reaches the browser.</b> Every device call is server-side; the front end talks
+only to our own <code>/api/*</code>.</li>
+<li><b>Feeds are hostile input.</b> Article titles are escaped on output, and URLs are validated against
+<code>^https?://</code> at three layers — the parser, the database insert, and the renderer — after a review
+pass caught that a feed could inject a <code>javascript:</code> link.</li>
+<li><b>Bounded everything.</b> 4 MB cap per feed body, timeouts on every network call, retention limits on
+every table, and a semaphore on camera streams.</li>
+</ul>
+<div class="box ok">
+<div class=h>Boring on purpose</div>
+<p style="margin:0">Nothing here is clever. A cable instead of a network, an outbound tunnel instead of a
+firewall rule, a flat file database, a single HTML page, and a shell script on a timer. The interesting part
+of the project is what runs on top: three models on a device you can hold in one hand, reading the world's
+news at 24 tokens a second, all night, unattended.</p>
+</div>
+</section>
+
+<div class=foot>
+Every measurement in this document was taken on the hardware described, on 2026-08-21, and re-verified
+against the live machines before publication. Companion document:
+<a href="https://artifacts.semfreak.dev/a/tiiny/warboard-postmortem/">WARBOARD — Post-Mortem &amp; Runbook</a>,
+which covers the deployment timeline, the failures, and a rebuild-from-zero procedure.
+</div>
+</div></body></html>
