@@ -279,6 +279,15 @@ canvas{display:block;max-width:100%;min-width:0}
 }
 .utab.on{background:#181320;color:#e8ebf2;border-color:#c8372d;box-shadow:0 0 6px rgba(200,55,45,.35)}
 .utab:hover:not(.on){color:#9aa4b8}
+/* NPU gauge + resident models share one row so the panel fits without scrolling */
+.grow{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:center;margin-bottom:4px}
+.grow .gaugewrap{margin:0}
+.mdlbox{min-width:0;align-self:stretch;display:flex;flex-direction:column;justify-content:center}
+.mdlbox .mh{display:flex;justify-content:space-between;gap:6px;font-size:9px;letter-spacing:.1em;
+  color:#5c667a;text-transform:uppercase;margin-bottom:6px;white-space:nowrap}
+.mdlbox .mh span{color:#d9a441}
+.mdlbox .mdl{padding:3px 0}
+@media(max-width:520px){.grow{grid-template-columns:1fr}}
 .piident .nm{font-size:13px;letter-spacing:.06em;color:#e8ebf2;margin-bottom:3px}
 .piident .sub{font-size:10.5px;line-height:1.55;color:#5c667a;letter-spacing:.03em}
 .pizones{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
@@ -675,11 +684,17 @@ canvas{display:block;max-width:100%;min-width:0}
 
           <div class="usec">
             <div class="h" title="Live NPU load reported by the Tiiny device API, sampled every 5s. Spikes to 100% during enrichment, sitreps, and image generation.">NPU UTILISATION</div>
-            <div class="gaugewrap">
-              <canvas id="gauge"></canvas>
-              <div class="gaugetxt">
-                <div class="v"><span id="npuVal">--</span><span class="pc">%</span></div>
-                <div class="k">NPU LOAD</div>
+            <div class="grow">
+              <div class="gaugewrap">
+                <canvas id="gauge"></canvas>
+                <div class="gaugetxt">
+                  <div class="v"><span id="npuVal">--</span><span class="pc">%</span></div>
+                  <div class="k">NPU LOAD</div>
+                </div>
+              </div>
+              <div class="mdlbox">
+                <div class="mh" title="Models resident on the NPU simultaneously; U = the device&#39;s capacity units out of 100">LOADED MODELS<span id="npuBudget">NPU --/--</span></div>
+                <div id="models"><div class="empty" style="min-height:30px">NO MODEL TELEMETRY</div></div>
               </div>
             </div>
             <div class="mrow"><span class="k" title="Device NPU memory in use / total — the three resident models plus working buffers">NPU MEM</span><span class="track"><span class="fill" id="fNpuMem"></span></span><span class="v" id="vNpuMem">-- / --</span></div>
@@ -699,11 +714,6 @@ canvas{display:block;max-width:100%;min-width:0}
               <div class="num"><span id="tpsVal">--</span><span class="u">TOK/S</span></div>
               <canvas id="tpsSpark"></canvas>
             </div>
-          </div>
-
-          <div class="usec">
-            <div class="h" title="Models resident on the NPU simultaneously; U = the device&#39;s capacity units out of 100">LOADED MODELS &mdash; <span id="npuBudget">NPU --/--</span></div>
-            <div id="models"><div class="empty" style="min-height:34px">NO MODEL TELEMETRY</div></div>
           </div>
 
           <div class="usec">
