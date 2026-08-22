@@ -404,7 +404,7 @@ a.nm.hf:hover{color:#e8ebf2;border-bottom-color:#c8372d}
   border:1px solid #1d222e;color:#9aa4b8;border-radius:3px;padding:4px 8px;white-space:nowrap}
 .pscript:hover{border-color:#2fa96d;color:#e8ebf2}
 .pscript.on{border-color:#2fa96d;color:#2fa96d}
-.pscriptbox{max-height:0;overflow:hidden;transition:max-height .25s ease;margin-top:0}
+.pscriptbox{position:relative;max-height:0;overflow:hidden;transition:max-height .25s ease;margin-top:0}
 .pscriptbox.open{max-height:260px;overflow-y:auto;margin-top:9px;border-top:1px solid #1d222e;padding-top:8px}
 #pScriptBody{font-size:11.5px;line-height:1.7;color:#707a8e}
 #pScriptBody .sx{transition:color .2s,background .2s;border-radius:2px;padding:0 1px}
@@ -1778,8 +1778,16 @@ function followScript(){
   }
   var now=els[cur];
   if(now && $("pScriptBox").classList.contains("open")){
-    var box=$("pScriptBox"), top=now.offsetTop-box.clientHeight/2;
-    box.scrollTo({top:Math.max(0,top),behavior:"smooth"});
+    /* Measure against the SCROLL BOX, not offsetParent: the spans' offsetParent
+       is the positioned .player, so offsetTop includes the header and controls
+       and scrolling to it overshoots, hiding the live line above the pane.
+       Rect deltas are container-relative and immune to that. Target sits just
+       above centre so there is read-ahead room below. */
+    var box=$("pScriptBox");
+    var br=box.getBoundingClientRect(), nr=now.getBoundingClientRect();
+    var delta=(nr.top-br.top)-(box.clientHeight*0.42)+(nr.height/2);
+    var want=Math.max(0, Math.min(box.scrollTop+delta, box.scrollHeight-box.clientHeight));
+    if(Math.abs(want-box.scrollTop)>4) box.scrollTo({top:want,behavior:"smooth"});
   }
 }
 function closePlayer(){ $("player").classList.remove("on"); try{$("pAudio").pause();}catch(e){} }
