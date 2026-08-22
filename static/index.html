@@ -287,6 +287,8 @@ canvas{display:block;max-width:100%;min-width:0}
   color:#5c667a;text-transform:uppercase;margin-bottom:6px;white-space:nowrap}
 .mdlbox .mh span{color:#d9a441}
 .mdlbox .mdl{padding:3px 0}
+a.nm.hf{color:inherit;text-decoration:none;border-bottom:1px dotted #3f4a5a;cursor:pointer}
+a.nm.hf:hover{color:#e8ebf2;border-bottom-color:#c8372d}
 @media(max-width:520px){.grow{grid-template-columns:1fr}}
 .piident .nm{font-size:13px;letter-spacing:.06em;color:#e8ebf2;margin-bottom:3px}
 .piident .sub{font-size:10.5px;line-height:1.55;color:#5c667a;letter-spacing:.03em}
@@ -1772,8 +1774,15 @@ function renderStats(){
       var short=String(m.model_id||m.id||"model");
       if(short.indexOf("/")>=0) short=short.split("/").pop();
       var u=pickNum(m,"npu_usage","npu_units","usage");
-      mm.push('<div class="mdl"><span class="'+dc+'"></span>'+
-              '<span class="nm" title="'+esc(m.model_id||"")+'">'+esc(short)+'</span>'+
+      /* model ids are HuggingFace paths (org/name) — link them, but only when the
+       id actually looks like one, since it arrives from the device API */
+    var full=String(m.model_id||"");
+    var nm='<span class="nm" title="'+esc(full)+'">'+esc(short)+'</span>';
+    if(/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(full)){
+      nm='<a class="nm hf" href="https://huggingface.co/'+encodeURI(full)+'" target="_blank" '+
+         'rel="noopener noreferrer" title="'+esc(full)+' — open on Hugging Face">'+esc(short)+'</a>';
+    }
+    mm.push('<div class="mdl"><span class="'+dc+'"></span>'+nm+
               (u!=null?'<span class="u">'+Math.round(u)+'U</span>':'')+
               '<span class="st">'+esc((m.status||"?").toUpperCase())+'</span></div>');
     }
