@@ -532,7 +532,13 @@ bash /opt/warboard/load-models.sh                   # when the board reads EMBED
 <p>Nothing needs restarting after <code>load-models.sh</code> — the pipeline picks the embedder up on its next enrichment and flips <code>meta.embeddings</code> to <code>on</code> within a minute or two.</p>
 <p><b>Where the data lives</b></p>
 <table><tr><th>Path</th><th>What</th></tr><tr><td><code>/opt/warboard/warboard.db</code></td><td><b>everything</b> — plus <code>-wal</code> and <code>-shm</code> sidecars, <code>warboard:warboard</code></td></tr><tr><td><code>/opt/warboard/images/</code></td><td>cached Z-Image PNGs, one per item id</td></tr><tr><td><code>/etc/warboard.env</code></td><td>8 keys, <code>0640 root:warboard</code></td></tr><tr><td><code>/etc/warboard-tiiny.key</code></td><td>device SSH key, <code>0600 root:root</code></td></tr><tr><td><code>/etc/systemd/system/warboard*.{service,timer}</code></td><td>5 units</td></tr><tr><td><code>/etc/cloudflared/{config.yml,&lt;uuid&gt;.json}</code></td><td>tunnel</td></tr><tr><td>journald</td><td>every log line, per unit</td></tr></table>
-<p>Schema: <code>items</code>, <code>clusters</code>, <code>metrics</code>, <code>meta</code>, <code>oplog</code>. <b>[DIVERGENCE from CONTRACT.md]</b> the shipped <code>schema.sql</code> also carries <code>items.enrich_attempts</code> and <code>items.enrich_error_at</code> (retry budget) and the whole <code>oplog</code> table (<code>ts, kind, msg</code>, indexed <code>ts DESC</code>) that backs <code>/api/log</code>. Retention: items 21 d, metrics 8 d, orphan clusters — pruned hourly by the janitor thread.</p>
+<p>Schema: <code>items</code>, <code>clusters</code>, <code>metrics</code>, <code>meta</code>, <code>oplog</code>. <b>[DIVERGENCE from CONTRACT.md]</b> the shipped <code>schema.sql</code> also carries <code>items.enrich_attempts</code> and <code>items.enrich_error_at</code> (retry budget) and the whole <code>oplog</code> table (<code>ts, kind, msg</code>, indexed <code>ts DESC</code>) that backs <code>/api/log</code>. Retention (rewritten 2026-08-21): items and their analysis are kept <b>forever</b> — the AI output is the
+product, ~9.9 KB/article, ~4.3 GB/year against 4.4 TB free — with <code>WARBOARD_ITEM_RETENTION_DAYS</code>
+available if an operator ever wants a window. Raw metrics still expire at 8 d, but every completed hour is
+folded into <code>metrics_hourly</code> (avg/min/max/n) first, so week- and month-scale NPU trends outlive
+the samples. Generated images are bounded by disk cap (<code>WARBOARD_IMAGE_CAP_GB</code>, default 20)
+rather than by age, and never for an S4/S5 story. Orphan clusters and the oplog (48 h) are pruned hourly by
+the janitor thread.</p>
 <pre><code>sudo -u warboard python3 -c &quot;
 import sqlite3;c=sqlite3.connect(&#x27;/opt/warboard/warboard.db&#x27;)
 print(c.execute(&#x27;select count(*) from items&#x27;).fetchone())&quot;</code></pre>

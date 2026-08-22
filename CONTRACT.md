@@ -61,6 +61,12 @@ warboard/
   deploy/load-models.sh                                                         W5
   README.md            W5
 ```
+Expansion (2026-08-21), same rules apply:
+```
+  jobs.py              idle-time deep-work scheduler   (integrator)
+  r2.py                offsite sync to Cloudflare R2   (W3-expansion)
+  deploy/R2-SETUP.md   operator steps for the bucket   (W3-expansion)
+```
 
 ## SQLite schema (schema.sql — exact)
 ```sql
@@ -98,7 +104,22 @@ CREATE TABLE IF NOT EXISTS metrics(
 CREATE INDEX IF NOT EXISTS idx_metrics ON metrics(key, ts DESC);
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
 -- meta keys: embeddings(on|off), last_fetch_ts, pipeline_started_ts, tokens_total, items_enriched_total
+CREATE TABLE IF NOT EXISTS metrics_hourly(   -- downsampled long-term telemetry
+  ts_hour INTEGER NOT NULL, key TEXT NOT NULL,
+  "avg" REAL NOT NULL, "min" REAL NOT NULL, "max" REAL NOT NULL, n INTEGER NOT NULL,
+  PRIMARY KEY(ts_hour, key)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS docs(      -- long-form AI output from jobs.py
+  id INTEGER PRIMARY KEY,
+  kind TEXT NOT NULL,          -- dossier | synthesis | brief
+  subject TEXT NOT NULL,       -- entity name | COCOM region | YYYY-MM-DD
+  title TEXT, body TEXT NOT NULL, created_at REAL NOT NULL,
+  item_count INTEGER DEFAULT 0, meta TEXT);
 ```
+`schema.sql` is the source of truth and also ships `items.enrich_attempts` / `enrich_error_at`
+(retry budget), the `oplog` table behind `/api/log`, and the index set that keeps a
+forever-growing `items` table fast (partial + expression indexes for `recent_items`,
+`pending_items`, `clustered_embeddings`). Reasoning for each index is in db.py's
+"index choices" block; `python3 db.py` asserts the query plans.
 
 ## db.py (W1) — public interface (exact signatures)
 ```python
@@ -115,9 +136,34 @@ top_clusters(con, limit=12) -> list[Row]            # by updated_at desc, item_c
 record_metric(con, key, value, ts=None)
 latest_metrics(con, keys:list, window_s=3600) -> dict  # {key: {"latest": x, "series": [[ts,v],...]}} series downsampled ≤120 points
 get_meta(con, key, default=None) / set_meta(con, key, value)
-prune(con)                                          # items>21d, metrics>8d, orphan clusters
+prune(con, images_dir=None)                         # see retention policy below
 counts(con) -> dict  # {items_total, items_24h, enriched_24h, pending, errors_24h, sources_alive_1h(count of distinct source with fetched_at>now-3600)}
+rollup_metrics(con, until_ts=None) -> dict          # folds completed hours into metrics_hourly (idempotent)
+hourly_metrics(con, keys, window_s=7*86400, max_points=400) -> {key:{latest, series:[[ts,avg,min,max,n],...]}}
+prune_images(con, images_dir=None, max_gb=None) -> dict   # bounded image cache, S4/S5 never deleted
+archive_stats(con) -> dict  # {items_total, oldest_item_ts, span_days, db_bytes, embeddings_present, ...}
+put_doc(con, kind, subject, title, body, item_count=0, meta=None) -> id|None  # kind: dossier|synthesis|brief
+latest_doc(con, kind, subject=None) -> Row|None      # newest of a kind (optionally one subject)
+recent_docs(con, kind=None, limit=20, with_body=False) -> list[Row]
+doc_counts(con) -> dict  # {dossiers, syntheses, briefs, docs_total, latest_doc_ts}
 ```
+`docs` rows are revisions, not upserts: writing the same (kind, subject) again keeps the
+older copy. They are part of the permanent archive — `prune()` has no DELETE for them.
+**Retention (revised 2026-08-21 — the archive is the product).** Items and their AI analysis are kept
+**forever**; `WARBOARD_ITEM_RETENTION_DAYS` (0/unset = forever) sets a window only if an operator wants
+one. Measured cost 9.9 KB/article ≈ 4.3 GB/yr against 4.4 TB free. Raw `metrics` still expire
+(`WARBOARD_METRIC_RETENTION_DAYS`, default 8) but `prune()` folds every completed hour into
+`metrics_hourly` first, so long-run trends survive. Generated images are bounded by **disk cap**
+(`WARBOARD_IMAGE_CAP_GB`, default 20): orphans first, then lowest-severity-oldest-first. An S4/S5
+image is exempt from that pass but **not forever** — both producers (`jobs.job_image`, which renders
+only S4+, and server.py's on-demand endpoint, which has no severity filter) write exactly the
+protected class, so a permanent exemption made the cap unreachable: once protected images alone
+passed it, every later prune freed 0 bytes and the directory grew until the disk filled. Still over
+cap, protected renders older than `WARBOARD_IMAGE_PROTECT_DAYS` (default 30, `0` = the old
+forever behaviour) are evicted oldest-first. The verdict is published to `meta.img_cap_state` so
+`jobs` and `server.py` can check it without repeating the sweep, and `job_image` writes an oplog
+event when it stalls on it. `prune()` calls `prune_images()` itself using `images/` beside the DB, so
+the existing hourly janitor needs no change.
 Writers use `with con:` transactions. It must be safe for pipeline (writer) and server
 (reader) to hold separate connections to the same file.
 
@@ -166,8 +212,49 @@ Threads (all daemon=True, all loops try/except-per-iteration with backoff):
    Sleep 2s when queue empty.
 3. device-poller: Tiiny.device_stats every 30s → record npu_util/npu_mem_mb/cpu_pct/mem_pct + queue_depth.
 4. janitor: prune() hourly.
+5. vault: daily digests + project brief into the device Knowledge Base; each digest also
+   dropped locally via `r2.write_digest_copy` so the offsite loop can ship it.
+6. idle (was "sitrep"): hourly SITREP, then `jobs.run_due(con, job_ctx())` — ONE job per pass.
+7. r2: `r2.sync_all` every WARBOARD_R2_INTERVAL (900s). **Spawned only when `r2.from_env()`
+   is not None.** No R2_* env → no thread, no network, no `synced` ledger table. A PARTIAL
+   R2 config logs a warning naming the missing vars (it is a typo, not a decision).
 Env: TIINY_HOST, TIINY_KEY, WARBOARD_DB (default ./warboard.db). Log one line per event to stdout
 (journald catches it). SIGTERM = clean exit.
+
+## jobs.py — idle-time deep work (integrator)
+```python
+class Ctx(tiiny=None, log=None, stop=None, images_dir=None, db_path=None)  # host services
+run_due(con, ctx, now=None) -> dict     # ONE job per pass; {"ran": name|None, ...}
+status(con, now=None) -> dict           # what is due, last-run clocks, doc counts
+job_recluster / job_synthesis / job_dossier / job_image / job_brief (con, ctx, force=False)
+brief_day_due(con, now=None) -> "YYYY-MM-DD"|None   # newest unbriefed day, walking back 7
+lease(con, ctx, label, seconds=CHAT_LEASE_S)   # context manager, always releases
+```
+Priority order (first DUE job runs): brief → recluster → synthesis → dossier → image.
+Three invariants, enforced inside `run_due`/`lease` so callers cannot get them wrong:
+1. **Nothing runs while `db.counts()['pending'] > 0`** — enrichment always wins.
+2. **Every device call holds the lease — BOTH keys, chat work included.** `img_hold_until` is
+   the key every consumer actually polls (`pipeline.enrich_body`'s between-item yield,
+   `pipeline._label_clusters`, `jobs.wait_for_quiet`); `enrich_busy_until` is what server.py's
+   on-demand image endpoint waits out. Advertising only `enrich_busy_until` for a 250s dossier
+   left the enricher free to start a second chat call on the same device handle, so a chat lease
+   now takes both. Release is **compare-and-clear**: these keys are shared across processes, and
+   a blind `"0"` in a `finally` zeroes somebody else's live lease — which causes the 150004
+   collision rather than preventing it. `jobs.wait_for_quiet` and server.py's release honour the
+   same rule.
+   Lease durations are DERIVED from the calls they guard — `CHAT_LEASE_S = 2×enrich.TIMEOUT+30`
+   (chat_json makes two attempts) and `IMAGE_LEASE_S = image timeout + 30`. A lease shorter
+   than its call is not a lease; the old inline 90s image lease against a 120s request is
+   exactly how two jobs land on the NPU together (device error 150004).
+3. **SIGTERM exits cleanly** — jobs check `ctx.stopped()` between units and never hold a lease
+   across a stop. Every job stamps `meta.job_last_<name>` even when it fails, so the interval
+   doubles as the backoff and a broken job cannot hot-loop.
+Rotation is **attempt-keyed, not success-keyed**: `meta.job_try_<kind>_<subject>` is stamped
+before the device call, so a region or entity whose generation keeps failing rotates out of the
+way instead of winning the "oldest" race forever.
+`python3 jobs.py --selfcheck` runs the whole thing device-free on a temp DB.
+CLI (also the operator's brief script): `--status`, `--brief [--day YYYY-MM-DD] [--force]`,
+`--job <name> [--force]`, or no args for one scheduler pass.
 
 ## server.py (W3) — daemon (systemd: warboard.service), port 8811
 stdlib ThreadingHTTPServer. Read-only DB connection(s). Routes:
@@ -175,6 +262,20 @@ stdlib ThreadingHTTPServer. Read-only DB connection(s). Routes:
 - `GET /api/items?region&category&since&limit` → `{"items":[{id,url,source,title,published,summary,category,region,severity,countries,cluster_id}]}` (limit≤200 default 100)
 - `GET /api/clusters` → `{"clusters":[{id,label,item_count,top_severity,updated_at,titles:[3 newest member titles]}]}`
 - `GET /api/stats` → `{"counts":{...db.counts...},"meta":{embeddings,last_fetch_ts,tokens_total,items_enriched_total,pipeline_started_ts},"device":{latest npu_util,npu_mem,cpu_pct,mem_pct + models list from most recent poll},"series":{npu_util:[[ts,v]..],gen_tps:[..],queue_depth:[..]}}`  (series from latest_metrics, 1h window)
+  **Additive only.** The expansion adds two top-level keys — `archive` (db.archive_stats: how far
+  the archive reaches, item totals, db bytes, projected GB/yr) and `docs` (db.doc_counts:
+  dossiers/syntheses/briefs/docs_total/latest_doc_ts) — plus `meta.job_<name>_total`,
+  `meta.images_total`, `meta.r2_last_sync_ts`, `meta.r2_last_ship_ts`, `meta.r2_objects_total`.
+  Nothing that existed moved or changed type, so an older index.html keeps working.
+  `?series=long[&days=N]` (opt-in, default payload unchanged) adds `series_long` from
+  `db.hourly_metrics` — the hourly rollup that outlives the 8-day raw-metric retention.
+  `meta.r2_last_sync_ts` means "a pass completed"; `meta.r2_last_ship_ts` means "something
+  actually moved". Stamping only the latter made a healthy idle loop look like a dead one.
+- `GET /api/docs?kind&limit` → `{"counts":{...},"docs":[{id,kind,subject,title,created_at,item_count}]}`
+  (bodies omitted); `GET /api/docs?id=N` → `{"doc":{...,"body":"..."}}`. Unknown kind → 400.
+- `GET /api/log` → also suppresses a STALE `now` string: `now_doing` is cleared in a `finally`,
+  but a SIGKILL mid-inference strands it, so the board only shows it while a lease timestamp
+  is still in the future.
 - `GET /cam.mjpg` → streaming proxy to `http://127.0.0.1:8812/stream` (ustreamer): stream
   chunks through with correct content-type; if upstream down return 503 fast. Also
   `GET /cam.jpg` proxy to `:8812/snapshot`.
@@ -224,6 +325,17 @@ no libraries. Keep it legible from across a room: big numbers, high contrast.
 TIINY_HOST (default 192.168.1.158) · TIINY_KEY (required) · WARBOARD_DB (default ./warboard.db,
 /opt/warboard/warboard.db on Pi) · PORT (default 8811) · CAM_URL (default http://127.0.0.1:8812) ·
 GNEWS_API_KEY (optional).
+Retention (all optional): WARBOARD_ITEM_RETENTION_DAYS (0/unset = keep forever) ·
+WARBOARD_METRIC_RETENTION_DAYS (default 8, raw samples only) ·
+WARBOARD_METRIC_HOURLY_RETENTION_DAYS (0/unset = forever) · WARBOARD_IMAGE_CAP_GB (default 20) ·
+WARBOARD_IMAGE_PROTECT_DAYS (default 30, 0 = S4/S5 renders exempt forever).
+Jobs (all optional): WARBOARD_RECLUSTER_INTERVAL (1800) · WARBOARD_SYNTHESIS_INTERVAL (3600) ·
+WARBOARD_DOSSIER_INTERVAL (5400) · WARBOARD_IMAGE_INTERVAL (600) · WARBOARD_BRIEF_CHECK (900) ·
+WARBOARD_BRIEF_AFTER_MIN (30) · WARBOARD_IMAGE_DAILY_CAP (12) ·
+WARBOARD_IMAGE_RETRY_AFTER (21600, per-item image failure cooldown) · IMAGE_MODEL (Z-Image-Turbo).
+Offsite (all four required together, or the feature stays inert): R2_ENDPOINT · R2_ACCESS_KEY_ID ·
+R2_SECRET_ACCESS_KEY · R2_BUCKET · R2_REGION (auto) · WARBOARD_R2_INTERVAL (900) ·
+WARBOARD_DIGESTS_DIR (default `digests/` beside the DB). See deploy/R2-SETUP.md.
 
 ## Definition of done (integrator verifies end-to-end, live)
 1. `python3 feeds.py` fetches ≥5 feeds with new items.
@@ -232,3 +344,9 @@ GNEWS_API_KEY (optional).
 4. `server.py` serves `/`, all `/api/*` with real data; index.html renders it.
 5. No secrets in frontend; all timeouts/try-except verified by reading, loops survive a dead feed + a Tiiny outage (simulate by wrong port → error logged, loop continues).
 6. `python3 -m py_compile` clean on every .py; install.sh passes `bash -n`.
+7. `python3 db.py`, `python3 jobs.py --selfcheck` and `python3 r2.py --selfcheck` all pass.
+8. Each job type produces real output against the live device: an entity dossier, a regional
+   synthesis, a recluster pass that re-homes orphaned items, an image render inside both caps,
+   and a daily brief. Every one narrates itself into the AI OPS LOG.
+9. R2 stays completely inert with no credentials (no thread, no requests, no ledger table) and
+   ships images + digests + a daily snapshot when configured — idempotently.

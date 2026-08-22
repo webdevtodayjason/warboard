@@ -66,11 +66,15 @@ frontend only ever talks to our own `/api/*` on port 8811.
 ```
 warboard/
   CONTRACT.md          build contract — the pinned interfaces
-  schema.sql           sqlite schema (items, clusters, metrics, meta)
+  schema.sql           sqlite schema (items, clusters, metrics, meta, docs)
   db.py                every DB access in the system
   feeds.py             feed list + fetch/parse/insert
   enrich.py            Tiiny client, enrichment prompt, clustering math
-  pipeline.py          daemon: fetcher · enricher · device-poller · janitor
+  jobs.py              idle-time deep work: dossiers · syntheses · cluster
+                       sweeps · image backfill · the daily brief
+  r2.py                offsite sync to Cloudflare R2 (inert without R2_* env)
+  pipeline.py          daemon: fetcher · enricher · device-poller · janitor ·
+                       vault · idle (jobs.py) · r2
   server.py            daemon: HTTP API + static + camera proxy  (:8811)
   static/index.html    the board — one self-contained file, no CDN, no build
   deploy/
@@ -81,8 +85,24 @@ warboard/
     load-models.sh          load the embedder onto the NPU, verify it
     cloudflared-config.yml  named-tunnel ingress
     TUNNEL.md               operator steps for warboard.semfreak.dev
+    R2-SETUP.md             operator steps for the offsite bucket
   README.md            this file
 ```
+
+### What the device does when the wire is quiet
+
+The enrichment queue is the day job, and it drains. `jobs.py` is what the NPU does
+instead — one job per pass, never while `pending > 0`, always holding the NPU lease:
+
+| job | every | what it writes |
+|---|---|---|
+| `brief` | daily | the executive brief for the finished UTC day (`docs`, + a markdown copy for R2) |
+| `recluster` | 30 min | re-homes enriched items that never landed in a cluster; labels clusters that grew |
+| `synthesis` | 1 h | one COCOM AOR's last 24h read into a regional assessment |
+| `dossier` | 90 min | the hottest entity on the wire, 14 days of coverage, written up |
+| `image` | 10 min | one missing S4+ story render, inside the daily and disk caps |
+
+Read them at `/api/docs`, counted at `/api/stats` → `docs`, narrated in the AI OPS LOG.
 
 ---
 
@@ -109,6 +129,18 @@ Each module also self-checks on its own:
 ```bash
 python3 feeds.py     # fetch every feed once, print per-source counts
 python3 enrich.py    # one live enrichment + one embedding + device stats
+python3 db.py        # schema, retention, rollup + query-plan assertions
+python3 jobs.py --selfcheck    # the whole scheduler, device-free, on a temp DB
+python3 r2.py --selfcheck      # offsite round-trip (prints "inert" with no R2_* env)
+```
+
+The job scheduler is also the operator's brief script:
+
+```bash
+python3 jobs.py --status                        # what is due, last-run clocks, doc counts
+python3 jobs.py --brief                         # file the brief for the last finished UTC day
+python3 jobs.py --brief --day 2026-08-20 --force
+python3 jobs.py --job synthesis --force         # run one job right now
 ```
 
 ---
@@ -181,6 +213,14 @@ sqlite3 /opt/warboard/warboard.db 'select count(*) from items'   # if sqlite3 is
 | `BIND` | `127.0.0.1` | loopback only — the tunnel is the intended path in. Set `0.0.0.0` to also expose the (unauthenticated) board on the LAN |
 | `CAM_URL` | `http://127.0.0.1:8812` | ustreamer origin proxied by `/cam.mjpg` |
 | `GNEWS_API_KEY` | unset | optional extra source; everything else is keyless |
+| `WARBOARD_IMAGE_DAILY_CAP` | `12` | idle image renders per UTC day |
+| `WARBOARD_IMAGE_CAP_GB` | `20` | disk ceiling on the image cache |
+| `WARBOARD_IMAGE_PROTECT_DAYS` | `30` | how long an S4/S5 render is exempt from eviction. Both renderers write only S4/S5, so a permanent exemption made the cap above unreachable. `0` = exempt forever (the old behaviour) |
+| `WARBOARD_IMAGE_RETRY_AFTER` | `21600` | seconds before retrying an item the device refused to render |
+| `WARBOARD_ITEM_RETENTION_DAYS` | `0` | 0 = keep every article forever (the archive is the product) |
+| `WARBOARD_{RECLUSTER,SYNTHESIS,DOSSIER,IMAGE}_INTERVAL` | see `jobs.py` | seconds between idle jobs |
+| `R2_ENDPOINT` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_BUCKET` | unset | all four or nothing — offsite sync is fully inert without them. See `deploy/R2-SETUP.md` |
+| `WARBOARD_R2_INTERVAL` | `900` | seconds between offsite passes |
 
 ---
 
@@ -192,7 +232,9 @@ sqlite3 /opt/warboard/warboard.db 'select count(*) from items'   # if sqlite3 is
 | `GET /healthz` | liveness json |
 | `GET /api/items?region&category&since&limit` | enriched articles, newest first (limit ≤ 200) |
 | `GET /api/clusters` | developing stories: label, count, top severity, 3 newest titles |
-| `GET /api/stats` | counts, meta, live device telemetry, 1 h series for the sparklines |
+| `GET /api/stats` | counts, meta, live device telemetry, 1 h series for the sparklines, plus `archive` (span/size of the permanent archive) and `docs` (dossier/synthesis/brief counts) |
+| `GET /api/docs?kind&limit` · `GET /api/docs?id=N` | the AI's long-form output: index, or one document with its body |
+| `GET /api/log` | AI OPS LOG — every job narrates itself here |
 | `GET /cam.mjpg` · `GET /cam.jpg` | rack camera, proxied from ustreamer |
 
 ---

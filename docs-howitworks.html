@@ -238,7 +238,7 @@ enrich   serial queue → Ornith → validate → embed → cluster → metrics
 device   NPU/CPU/memory telemetry every 5 s
 vault    daily intel digest filed into the device Knowledge Base
 sitrep   hourly situation report + idle-time image pre-rendering
-janitor  prune hourly (items 21 d, metrics 8 d, oplog 48 h)</code></pre>
+janitor  prune hourly (items forever, metrics 8 d → hourly rollup, images 20 GB cap, oplog 48 h)</code></pre>
 
 <h3>Getting structured data out of a reasoning model</h3>
 <p>Ornith puts its chain of thought in <code>message.reasoning_content</code>, and that content
@@ -302,7 +302,9 @@ NPU idle. Only the native graph appears to have shipped. The board crops the squ
 <li><b>Prompting matters.</b> The first version said "editorial news illustration for this headline," and the
 model dutifully painted newspaper signage covered in garbled pseudo-text. Describing the <em>scene</em>
 instead, with writing surfaces in the negative prompt, fixed it.</li>
-<li><b>Cached forever</b> on disk, keyed by id, so a popular story costs one generation.</li>
+<li><b>Cached</b> on disk, keyed by id, so a popular story costs one generation. The directory is
+capped (20 GB by default): orphans go first, then the oldest low-severity images. An S4/S5
+story's image is never deleted.</li>
 </ul>
 </section>
 

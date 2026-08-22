@@ -558,12 +558,19 @@ def _recent_cluster_titles(con, since_ts):
     return out
 
 
-def assign_cluster(con, item_id, emb_bytes, threshold=CLUSTER_THRESHOLD):
+def assign_cluster(con, item_id, emb_bytes, threshold=CLUSTER_THRESHOLD, members=None):
     """Join the nearest cluster touched in the last 72h, else start a new one.
 
     Embedding path: max cosine against each cluster's most recent members.
     Fallback (embeddings off): max title-Jaccard, threshold 0.55.
     Returns the cluster id, or None if the DB layer is unavailable.
+
+    `members` is an optional pre-fetched [(item_id, cluster_id, embedding), ...]
+    window, for callers assigning many items in one pass (jobs.job_recluster does
+    up to RECLUSTER_BATCH=40). Without it each call re-runs clustered_embeddings,
+    reloading every clustered item of the last 72h -- 4 KB of embedding each --
+    from SQLite, forty times over, which is tens of seconds of pinned CPU on a Pi.
+    Default None keeps the single-item behaviour exactly as it was.
     """
     if _db is None:
         return None
@@ -574,14 +581,16 @@ def assign_cluster(con, item_id, emb_bytes, threshold=CLUSTER_THRESHOLD):
     best_cid, best_score = None, 0.0
     try:
         if emb_bytes:
+            if members is None:
+                members = _db.clustered_embeddings(con, since) or []
             per_cluster = {}
-            for iid, cid, blob in (_db.clustered_embeddings(con, since) or []):
+            for iid, cid, blob in members:
                 if cid is None or not blob or iid == item_id:
                     continue
                 per_cluster.setdefault(cid, []).append((iid, blob))
-            for cid, members in per_cluster.items():
-                members.sort(key=lambda m: m[0], reverse=True)  # id asc == time asc
-                for _iid, blob in members[:_MEMBERS_PER_CLUSTER]:
+            for cid, group in per_cluster.items():   # not `members`: that is the arg
+                group.sort(key=lambda m: m[0], reverse=True)    # id asc == time asc
+                for _iid, blob in group[:_MEMBERS_PER_CLUSTER]:
                     score = cosine(emb_bytes, blob)
                     if score > best_score:
                         best_cid, best_score = cid, score

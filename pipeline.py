@@ -10,11 +10,17 @@ read concurrently):
   device   Tiiny.device_stats every 30s -> npu/cpu/mem metrics + queue_depth,
            latest snapshot cached in meta.device_last for the server
   janitor  db.prune hourly
+  vault    daily intel digests + project brief into the device Knowledge Base
+  idle     hourly SITREP, then jobs.run_due() -- the deep-work scheduler
+           (dossiers, regional syntheses, cluster sweeps, image backfill, the
+           daily brief). Never runs while the enrichment queue has work.
+  r2       offsite sync (images, digests, daily snapshot) -- SPAWNED ONLY when
+           R2_* credentials are configured; otherwise the thread does not exist.
 
 Every loop iteration is wrapped: an exception logs one line and backs off, never
 kills the thread. SIGTERM/SIGINT = clean exit.
 
-Env: TIINY_HOST, TIINY_KEY, WARBOARD_DB (default ./warboard.db).
+Env: TIINY_HOST, TIINY_KEY, WARBOARD_DB (default ./warboard.db), R2_* (optional).
 Run `python3 pipeline.py --once` for a single pass of every loop (integrator check).
 """
 
@@ -33,12 +39,16 @@ if BASE_DIR not in sys.path:
 import db  # noqa: E402
 import enrich  # noqa: E402
 import feeds  # noqa: E402
+import jobs  # noqa: E402
+import r2  # noqa: E402
 
 DB_PATH = os.environ.get("WARBOARD_DB") or os.path.join(BASE_DIR, "warboard.db")
 
 FETCH_INTERVAL = float(os.environ.get("WARBOARD_FETCH_INTERVAL", "300"))
 DEVICE_INTERVAL = 5.0   # 8s image-gen spikes fall through a 30s net (Jason caught the dead needle)
 JANITOR_INTERVAL = 3600.0
+IDLE_INTERVAL = 300.0
+R2_INTERVAL = float(os.environ.get("WARBOARD_R2_INTERVAL", "900"))
 
 ENRICH_BATCH = 20
 IDLE_SLEEP = 2.0           # queue empty
@@ -587,10 +597,14 @@ def _handle_signal(signum, _frame):
 
 def run_once():
     """One pass of every loop, sequential. For integrator verification."""
+    global _R2
+    if _R2 is None:
+        _R2 = r2.from_env()
     con = db.connect(DB_PATH)
     try:
         for name, body in (("fetch", fetch_body), ("device", device_body),
-                           ("enrich", enrich_body), ("janitor", janitor_body)):
+                           ("enrich", enrich_body), ("janitor", janitor_body),
+                           ("idle", idle_body), ("r2", r2_body)):
             try:
                 body(con)
             except Exception as exc:
@@ -676,6 +690,13 @@ def _vault_file(con, filename, text):
         raise RuntimeError("finalize rejected: %s" % str(fin)[:150])
     db.add_event(con, "VAULT", "filed %s to device Knowledge Base (%d entries indexed)"
                  % (filename, fin.get("generated_entries") or 0))
+    # Drop a local copy so the offsite loop can ship it. Best-effort by design:
+    # the device KB is the primary home, R2 is the backup, and a full disk here
+    # must not fail a digest that already landed on the device.
+    try:
+        r2.write_digest_copy(text, filename, db_path=DB_PATH)
+    except Exception as exc:
+        log("[vault] digest copy for r2 failed: %s" % str(exc)[:100])
     _bump_meta(con, "vault_digests_total", 1)
     log("[vault] filed %s (%d entries)" % (filename, fin.get("generated_entries") or 0))
     return True
@@ -729,7 +750,12 @@ def vault_body(con):
     if not db.get_meta(con, "vault_bootstrapped"):
         _vault_file(con, "warboard-project-brief.md", ABOUT_DOC)
         day = time.strftime("%Y-%m-%d", time.gmtime(now))
-        start = time.mktime(time.strptime(day, "%Y-%m-%d")) - time.timezone
+        # jobs.day_bounds is the ONE definition of a UTC day (calendar.timegm).
+        # mktime reads the struct as LOCAL time and time.timezone is the non-DST
+        # offset, so on a host in a DST zone this window was an hour out for half
+        # the year and the brief and the digest for the same nominal day covered
+        # different spans.
+        start = jobs.day_bounds(day)[0]
         text = _build_digest(con, start, now, day, partial=True)
         if text:
             _vault_file(con, "warboard-intel-%s-partial.md" % day, text)
@@ -745,7 +771,7 @@ def vault_body(con):
     if db.get_meta(con, "vault_last_day") not in (None, "", yday, today):
         pass  # fallthrough files yday below
     if db.get_meta(con, "vault_last_day") != today and yday != db.get_meta(con, "vault_last_day", ""):
-        start = time.mktime(time.strptime(yday, "%Y-%m-%d")) - time.timezone
+        start = jobs.day_bounds(yday)[0]
         text = _build_digest(con, start, start + 86400, yday)
         if text:
             _vault_file(con, "warboard-intel-%s.md" % yday, text)
@@ -755,11 +781,12 @@ def vault_body(con):
 
 
 # --------------------------------------------------------------------------- #
-# 6. sitrep + idle auto-imaging — keep the NPU doing real, visible work
+# 6. idle work — hourly SITREP, then the jobs.py deep-work scheduler.
+#    (The per-day image cap now lives in jobs.IMAGE_DAILY_CAP / WARBOARD_IMAGE_DAILY_CAP;
+#     the old inline _autoimage_one moved to jobs.job_image.)
 # --------------------------------------------------------------------------- #
 
 SITREP_INTERVAL_S = 3600.0
-AUTOIMG_DAILY_CAP = 12
 IMAGES_DIR = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "images")
 
 
@@ -799,77 +826,32 @@ def _write_sitrep(con):
     log("[sitrep] filed (%d chars from %d items)" % (len(sitrep), len(rows)))
 
 
-def _autoimage_one(con):
-    """Pre-render one S4+ story image while the queue is empty. Honors the same
-    img_hold lease the server uses so a viewer's click always wins."""
-    today = time.strftime("%Y-%m-%d", time.gmtime())
-    if db.get_meta(con, "autoimg_day") != today:
-        db.set_meta(con, "autoimg_day", today)
-        db.set_meta(con, "autoimg_count", "0")
-    try:
-        done = int(db.get_meta(con, "autoimg_count", "0") or 0)
-    except (TypeError, ValueError):
-        done = 0
-    if done >= AUTOIMG_DAILY_CAP:
-        return False
-    try:
-        hold = float(db.get_meta(con, "img_hold_until", "0") or 0)
-    except (TypeError, ValueError):
-        hold = 0
-    if time.time() < hold:
-        return False
-    row = None
-    for r in con.execute(
-            "SELECT id, title, summary FROM items WHERE enriched_at IS NOT NULL "
-            "AND severity >= 4 AND COALESCE(published, fetched_at) >= ? "
-            "ORDER BY COALESCE(published, fetched_at) DESC LIMIT 20",
-            (time.time() - 86400,)).fetchall():
-        if not os.path.exists(os.path.join(IMAGES_DIR, "%d.png" % r["id"])):
-            row = r
-            break
-    if row is None:
-        return False
-    import urllib.request
-    prompt = ("Photorealistic documentary photograph of the scene: %s. %s "
-              "Dramatic natural lighting, cinematic composition."
-              % (row["title"], (row["summary"] or "")[:200]))
-    body = json.dumps({"model": "Tongyi-MAI/Z-Image-Turbo", "prompt": prompt,
-                       "negative_prompt": "text, letters, words, signage, watermark, low quality",
-                       "width": 512, "height": 512,
-                       "seed": int(row["id"]) % 2147483647, "steps": 8}).encode()
-    req = urllib.request.Request(
-        "http://%s:8800/v1/image/generate" % KB_HOST, data=body,
-        headers={"Authorization": "Bearer " + KB_KEY,
-                 "Content-Type": "application/json"})
-    try:
-        db.set_meta(con, "img_hold_until", "%.3f" % (time.time() + 90))
-        db.set_meta(con, "now_doing", "AUTO-IMAGING S4+ STORY #%d" % row["id"])
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            raw = resp.read()
-        if raw[:1] == b"{":
-            return False  # device busy or declined; try next idle pass
-        os.makedirs(IMAGES_DIR, exist_ok=True)
-        tmp = os.path.join(IMAGES_DIR, "%d.png.tmp" % row["id"])
-        with open(tmp, "wb") as f:
-            f.write(raw)
-        os.replace(tmp, os.path.join(IMAGES_DIR, "%d.png" % row["id"]))
-        db.set_meta(con, "autoimg_count", str(done + 1))
-        db.add_event(con, "IMAGE", "auto-rendered S4+ story #%d — %s"
-                     % (row["id"], (row["title"] or "")[:80]))
-        log("[autoimg] #%d rendered" % row["id"])
-        return True
-    except Exception as exc:
-        log("[autoimg] #%d failed: %s" % (row["id"], str(exc)[:100]))
-        return False
-    finally:
-        try:
-            db.set_meta(con, "img_hold_until", "0")
-            db.set_meta(con, "now_doing", "")
-        except Exception:
-            pass
+_JOB_CTX = None
+_JOB_CTX_LOCK = threading.Lock()
 
 
-def sitrep_body(con):
+def job_ctx():
+    """The host services jobs.py runs against: our Tiiny handle, our log, our STOP.
+
+    Built once. Sharing the Tiiny handle matters — it is the same serial device.
+    """
+    global _JOB_CTX
+    with _JOB_CTX_LOCK:
+        if _JOB_CTX is None:
+            _JOB_CTX = jobs.Ctx(tiiny=tiiny, log=log, stop=STOP,
+                                images_dir=IMAGES_DIR, db_path=DB_PATH)
+        return _JOB_CTX
+
+
+def idle_body(con):
+    """Deep work while the wire is quiet: SITREP first, then the job scheduler.
+
+    The hourly SITREP stays inline (it is the board's headline panel and must not
+    queue behind a 90-second dossier). Everything else — entity dossiers, regional
+    syntheses, the cluster sweep, image backfill and the daily brief — is
+    jobs.run_due, which picks at most ONE job per pass, re-checks the pending
+    queue itself and takes the NPU lease around every device call.
+    """
     if not KB_KEY:
         return None
     # only work when the enrichment queue is quiet — enrichment always wins
@@ -900,15 +882,87 @@ def sitrep_body(con):
             except Exception:
                 pass
         return 30.0
-    _autoimage_one(con)
+
+    res = jobs.run_due(con, job_ctx()) or {}
+    if res.get("ran"):
+        # one line per job run; the oplog carries the detail for the board
+        log("[jobs] %s -> %s" % (res["ran"], json.dumps(
+            {k: v for k, v in res.items() if k not in ("ran", "due_count")},
+            default=str)[:220]))
+        # a job that did real work leaves more due behind it — come back sooner
+        return 30.0 if res.get("did_work") else None
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# 7. offsite sync — only exists when R2 is configured
+# --------------------------------------------------------------------------- #
+
+_R2 = None
+
+
+def r2_body(con):
+    """One bounded offsite pass: new images, new digests, the daily snapshot.
+
+    No NPU involvement, so this is deliberately NOT gated on the enrichment
+    queue — it is network and disk only. r2.sync_all runs each leg independently
+    and never raises.
+    """
+    if _R2 is None:
+        return 3600.0
+    res = r2.sync_all(con, DB_PATH, IMAGES_DIR, _R2, log=log) or {}
+    shipped = 0
+    parts = []
+    for leg in ("images", "digests", "snapshot"):
+        out = res.get(leg) or {}
+        if not isinstance(out, dict):
+            continue
+        if out.get("error"):
+            parts.append("%s=ERR" % leg)
+            continue
+        n = int(out.get("uploaded") or 0)
+        shipped += n
+        parts.append("%s=%d" % (leg, n))
+    if shipped:
+        db.add_event(con, "R2", "offsite sync shipped %d object(s) to R2 (%s)"
+                     % (shipped, ", ".join(parts)))
+        log("[r2] %s" % ", ".join(parts))
+    try:
+        # r2_last_sync_ts means "a pass completed", NOT "a pass shipped something".
+        # Stamping it only inside `if shipped` meant a healthy loop in its steady
+        # state (nothing new to upload) let its own freshness field age forever --
+        # indistinguishable on the board from an offsite backup that has been dead
+        # for a week, which is the one thing this field exists to tell an operator.
+        # r2_last_ship_ts carries "when something actually moved".
+        db.set_meta(con, "r2_last_sync_ts", "%.3f" % time.time())
+        if shipped:
+            db.set_meta(con, "r2_last_ship_ts", "%.3f" % time.time())
+            db.set_meta(con, "r2_objects_total", "%d" % (
+                int(float(db.get_meta(con, "r2_objects_total", "0") or 0)) + shipped))
+    except Exception:
+        pass
     return None
 
 
 def main():
+    global _R2
     log("warboard pipeline start db=%s tiiny=%s"
         % (DB_PATH, os.environ.get("TIINY_HOST", "192.168.1.158")))
     if not os.environ.get("TIINY_KEY"):
         log("WARNING TIINY_KEY unset — enrichment will fail until it is set")
+
+    # Offsite sync is opt-in: no R2_* env, no thread, no DB writes, nothing.
+    _R2 = r2.from_env()
+    if _R2 is None:
+        gaps = r2.missing_env()
+        if gaps and len(gaps) < 4:
+            # a PARTIAL config is a typo in /etc/warboard.env, not a decision
+            log("WARNING R2 partially configured — offsite sync OFF, missing: %s"
+                % ", ".join(gaps))
+        else:
+            log("r2 offsite sync not configured (inert)")
+    else:
+        log("r2 offsite sync armed: bucket=%s every %.0fs" % (_R2.bucket, R2_INTERVAL))
 
     try:
         con = db.connect(DB_PATH)
@@ -934,8 +988,10 @@ def main():
         _spawn("device", device_body, DEVICE_INTERVAL),
         _spawn("janitor", janitor_body, JANITOR_INTERVAL),
         _spawn("vault", vault_body, VAULT_CHECK_S),
-        _spawn("sitrep", sitrep_body, 300.0),
+        _spawn("idle", idle_body, IDLE_INTERVAL),
     ]
+    if _R2 is not None:
+        threads.append(_spawn("r2", r2_body, R2_INTERVAL))
     for th in threads:
         th.start()
     log("threads up: %s" % ", ".join(t.name for t in threads))

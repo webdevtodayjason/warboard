@@ -25,6 +25,7 @@ import platform
 import shutil
 import signal
 import socket
+import sqlite3
 import sys
 import threading
 import time
@@ -50,6 +51,7 @@ IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "Tongyi-MAI/Z-Image-Turbo")
 IMAGES_DIR = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "images")
 INDEX_PATH = os.path.join(BASE_DIR, "static", "index.html")
 
+DOC_KINDS = {"dossier", "synthesis", "brief"}
 REGIONS = {"NORTHCOM", "SOUTHCOM", "EUCOM", "CENTCOM", "AFRICOM", "INDOPACOM", "GLOBAL"}
 CATEGORIES = {"conflict", "terrorism", "cyber", "diplomacy", "economy", "disaster",
               "health", "crime", "politics", "tech", "energy"}
@@ -103,13 +105,64 @@ def read_index():
         return _index_cache["data"]
 
 
+_schema_ready = False
+_schema_lock = threading.Lock()
+
+
 def open_db():
-    con = db.connect(DB_PATH)
+    """A connection per request, with the schema applied exactly ONCE per process.
+
+    db.connect() executescripts the whole of schema.sql and runs _migrate on every
+    call. That was cheap when the schema was small; it now creates a table and six
+    indexes -- two of them expression indexes over COALESCE(published, fetched_at)
+    across the entire items table -- plus a conditional DROP/CREATE INDEX. Doing
+    that inside an HTTP handler means the first post-deploy request builds every
+    index while holding the write lock with busy_timeout=30000, and every request
+    after it re-parses the script. The cost scales with the archive, which is now
+    unbounded. So: full connect once, bare connect thereafter.
+    """
+    global _schema_ready
+    if not _schema_ready:
+        with _schema_lock:
+            if not _schema_ready:
+                con = db.connect(DB_PATH)
+                _schema_ready = True
+                try:
+                    con.execute("PRAGMA busy_timeout=5000")
+                except Exception:
+                    pass
+                return con
+    con = sqlite3.connect(DB_PATH, timeout=30.0, check_same_thread=False)
+    con.row_factory = sqlite3.Row
     try:
+        con.execute("PRAGMA synchronous=NORMAL")
         con.execute("PRAGMA busy_timeout=5000")
     except Exception:
         pass
     return con
+
+
+# How long one image request will sit waiting for the NPU before handing the
+# client a 202. jobs.py's chat lease runs to ~390s (max(240, 2*TIINY_TIMEOUT+30))
+# and a dossier really does hold the device that long, so the old flat 60s wait --
+# after which this endpoint tasked Z-Image anyway and burned its three 150004
+# retries into a 502 -- is now the common case, not the edge. The fix is not a
+# longer block (no browser sits on a 7-minute request): it is to believe the
+# advertised lease and let the client poll back.
+IMG_CHAT_WAIT_S = 90.0
+
+
+def _wait_for_chat(con, max_block_s=IMG_CHAT_WAIT_S):
+    """Wait out meta.enrich_busy_until. -> (quiet, seconds_still_advertised)."""
+    deadline = time.time() + float(max_block_s)
+    while True:
+        busy = as_float(db.get_meta(con, "enrich_busy_until"), 0.0) or 0.0
+        left = busy - time.time()
+        if left <= 0:
+            return True, 0.0
+        if time.time() >= deadline:
+            return False, left
+        time.sleep(1.5)
 
 
 def rget(row, key, default=None):
@@ -482,6 +535,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.r_item(query)
             if path == "/api/log":
                 return self.r_log(query)
+            if path == "/api/docs":
+                return self.r_docs(query)
             if path == "/api/ask":
                 return self.r_ask(query)
             if path == "/api/item/image":
@@ -661,6 +716,14 @@ class Handler(BaseHTTPRequestHandler):
         try:
             rows = db.recent_events(con, limit=limit)
             now = db.get_meta(con, "now_doing", "") or ""
+            # now_doing is cleared in a finally, but a SIGKILL (or a power cut)
+            # mid-inference leaves the last one stranded and the board would keep
+            # claiming the NPU is busy forever. The lease keys are timestamps for
+            # exactly this reason: once both have expired, nobody is working.
+            busy = max(as_float(db.get_meta(con, "enrich_busy_until"), 0.0) or 0.0,
+                       as_float(db.get_meta(con, "img_hold_until"), 0.0) or 0.0)
+            if now and time.time() > busy:
+                now = ""
             imgs = as_int(db.get_meta(con, "images_total"), 0) or 0
         finally:
             con.close()
@@ -669,6 +732,39 @@ class Handler(BaseHTTPRequestHandler):
                         "events": [{"ts": as_float(rget(r, "ts"), None),
                                     "kind": rget(r, "kind", ""),
                                     "msg": rget(r, "msg", "")} for r in rows]})
+
+    def r_docs(self, q):
+        """Long-form AI output from jobs.py: dossiers, regional syntheses, briefs.
+
+        `?kind=` filters, `?id=` returns one document with its body, otherwise a
+        newest-first index (bodies omitted, they run to 2 KB each).
+        """
+        doc_id = as_int(_first(q, "id"), None)
+        kind = (_first(q, "kind") or "").strip().lower() or None
+        if kind and kind not in DOC_KINDS:
+            return self.json(400, {"error": "unknown kind"})
+        limit = max(1, min(100, as_int(_first(q, "limit"), 20) or 20))
+        con = open_db()
+        try:
+            if doc_id:
+                row = con.execute("SELECT * FROM docs WHERE id = ?", (doc_id,)).fetchone()
+                if row is None:
+                    return self.json(404, {"error": "no such doc"})
+                return self.json(200, {"doc": {
+                    "id": rget(row, "id"), "kind": rget(row, "kind"),
+                    "subject": rget(row, "subject"), "title": rget(row, "title"),
+                    "body": rget(row, "body", ""),
+                    "created_at": as_float(rget(row, "created_at"), None),
+                    "item_count": as_int(rget(row, "item_count"), 0)}})
+            rows = db.recent_docs(con, kind=kind, limit=limit)
+            counts = db.doc_counts(con)
+        finally:
+            con.close()
+        self.json(200, {"counts": counts, "docs": [{
+            "id": rget(r, "id"), "kind": rget(r, "kind"),
+            "subject": rget(r, "subject"), "title": rget(r, "title"),
+            "created_at": as_float(rget(r, "created_at"), None),
+            "item_count": as_int(rget(r, "item_count"), 0)} for r in rows]})
 
     def r_item(self, q):
         item_id = as_int(_first(q, "id"), None)
@@ -739,23 +835,43 @@ class Handler(BaseHTTPRequestHandler):
         if not _IMG_LOCK.acquire(blocking=False):
             # one generation at a time; the client polls back
             return self.json(202, {"status": "busy", "retry_s": 4})
+        hold_token = None
         try:
-            # NPU handshake with pipeline.py: take the lease, then wait out any
-            # in-flight enrichment (chat + image concurrently => device 150004).
+            # NPU handshake with pipeline.py/jobs.py: wait out any advertised chat
+            # work FIRST, then take the lease (chat + image concurrently => device
+            # error 150004).
             hold_con = open_db()
             try:
-                db.set_meta(hold_con, "img_hold_until", "%.3f" % (time.time() + 180))
+                quiet, lease_left = _wait_for_chat(hold_con)
+                if not quiet:
+                    # Do not task a device that says it is busy. The client polls
+                    # back; burning the three 150004 retries and returning 502 is
+                    # worse for the viewer than an honest "try again".
+                    log("[image] #%d deferred: chat lease held for another %.0fs"
+                        % (item_id, lease_left))
+                    return self.json(202, {
+                        "status": "busy",
+                        "retry_s": max(5, min(120, int(lease_left) + 5)),
+                        "detail": "device is running a chat job"})
+                # Disk cap. This path had none: it writes into IMAGES_DIR with no
+                # severity filter, and every render it produces for an S4/S5 story
+                # is a file prune_images protects, so a viewer clicking through hot
+                # stories could grow the directory past WARBOARD_IMAGE_CAP_GB
+                # without bound. `over_cap` is None when there is no fresh janitor
+                # reading, which means "not known to be over" -- proceed.
+                if db.image_cap_state(hold_con).get("over_cap"):
+                    log("[image] #%d refused: image cache over disk cap" % item_id)
+                    return self.json(507, {
+                        "error": "image cache is over its disk cap",
+                        "detail": "raise WARBOARD_IMAGE_CAP_GB or lower "
+                                  "WARBOARD_IMAGE_PROTECT_DAYS"})
+                hold_token = "%.3f" % (time.time() + 180)
+                db.set_meta(hold_con, "img_hold_until", hold_token)
                 db.set_meta(hold_con, "now_doing",
                             "GENERATING IMAGE #%d — Z-IMAGE-TURBO" % item_id)
                 db.add_event(hold_con, "IMAGE",
                              "tasking Z-Image-Turbo for #%d — %s"
                              % (item_id, str(rget(row, "title", ""))[:80]))
-                deadline = time.time() + 60
-                while time.time() < deadline:
-                    busy = as_float(db.get_meta(hold_con, "enrich_busy_until"), 0) or 0
-                    if time.time() >= busy:
-                        break
-                    time.sleep(1.5)
             finally:
                 hold_con.close()
             # 150004 = NPU busy on the device; a stray chat call can still slip
@@ -802,28 +918,51 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             return self.send_bytes(200, data, "image/png")
         finally:
-            try:
-                rel = open_db()
-                db.set_meta(rel, "img_hold_until", "0")
-                db.set_meta(rel, "now_doing", "")
-                rel.close()
-            except Exception:
-                pass
+            if hold_token is not None:
+                try:
+                    rel = open_db()
+                    # Compare-and-clear: img_hold_until is shared with jobs.py and
+                    # pipeline.py, and a blind "0" here would drop a lease somebody
+                    # else took after us -- which is the 150004 collision the lease
+                    # exists to prevent, caused by the release rather than avoided.
+                    if str(db.get_meta(rel, "img_hold_until", "0")) == hold_token:
+                        db.set_meta(rel, "img_hold_until", "0")
+                        db.set_meta(rel, "now_doing", "")
+                    rel.close()
+                except Exception:
+                    pass
             _IMG_LOCK.release()
 
     def r_stats(self, q):
-        payload = {"counts": {}, "meta": {}, "device": {}, "series": {}}
+        # Shape is ADDITIVE only: counts/meta/device/series/host keep their exact
+        # existing contents and types, `archive` and `docs` are new top-level keys.
+        # An older index.html ignores them; nothing it reads moved.
+        payload = {"counts": {}, "meta": {}, "device": {}, "series": {},
+                   "archive": {}, "docs": {}}
         try:
             payload["host"] = host_stats()
         except Exception as exc:
             log("[stats] host stats failed: %s" % exc)
             payload["host"] = {}
+        hourly = None
+        long_days = 30.0
         con = open_db()
         try:
             try:
                 payload["counts"] = dict(db.counts(con) or {})
             except Exception as exc:
                 log("[stats] counts failed: %s" % exc)
+
+            # The archive is the product: how far back it reaches, how many
+            # analyses it holds, what it costs on disk.
+            try:
+                payload["archive"] = dict(db.archive_stats(con) or {})
+            except Exception as exc:
+                log("[stats] archive failed: %s" % exc)
+            try:
+                payload["docs"] = dict(db.doc_counts(con) or {})
+            except Exception as exc:
+                log("[stats] doc counts failed: %s" % exc)
 
             meta = {}
             try:
@@ -838,6 +977,14 @@ class Handler(BaseHTTPRequestHandler):
                     db.get_meta(con, "vault_digests_total"), 0)
                 meta["latest_sitrep"] = str(db.get_meta(con, "latest_sitrep", "") or "")[:2000]
                 meta["latest_sitrep_ts"] = as_float(db.get_meta(con, "latest_sitrep_ts"), None)
+                meta["images_total"] = as_int(db.get_meta(con, "images_total"), 0)
+                # jobs.py run counters — how much deep work the idle NPU has done
+                for name in ("dossier", "synthesis", "brief", "recluster", "image"):
+                    meta["job_%s_total" % name] = as_int(
+                        db.get_meta(con, "job_%s_total" % name), 0)
+                meta["r2_last_sync_ts"] = as_float(db.get_meta(con, "r2_last_sync_ts"), None)
+                meta["r2_last_ship_ts"] = as_float(db.get_meta(con, "r2_last_ship_ts"), None)
+                meta["r2_objects_total"] = as_int(db.get_meta(con, "r2_objects_total"), 0)
             except Exception as exc:
                 log("[stats] meta failed: %s" % exc)
             payload["meta"] = meta
@@ -861,6 +1008,21 @@ class Handler(BaseHTTPRequestHandler):
                     snap_ts = as_float(db.get_meta(con, "device_last_ts"), None)
             except Exception as exc:
                 log("[stats] device snapshot failed: %s" % exc)
+
+            # ?series=long reaches the hourly rollup. db.rollup_metrics folds every
+            # completed hour into metrics_hourly precisely so the trend survives
+            # the 8-day raw-metric retention -- but nothing read it, so past 8 days
+            # the data existed with no way to see it and the retention claim in
+            # db.py's docstring was unbacked. Opt-in: the default payload is
+            # byte-for-byte what it was.
+            if (_first(q, "series") or "").strip().lower() in ("long", "hourly"):
+                long_days = max(1.0, min(400.0, as_float(_first(q, "days"), 30.0) or 30.0))
+                try:
+                    hourly = db.hourly_metrics(con, list(SERIES_KEYS),
+                                               window_s=long_days * 86400) or {}
+                except Exception as exc:
+                    log("[stats] hourly series failed: %s" % exc)
+                    hourly = {}
         finally:
             con.close()
 
@@ -893,6 +1055,13 @@ class Handler(BaseHTTPRequestHandler):
             entry = metrics.get(key) or {}
             series = entry.get("series") or []
             payload["series"][key] = series if isinstance(series, list) else []
+
+        if hourly is not None:
+            payload["series_long"] = {"window_days": long_days, "keys": {}}
+            for key in SERIES_KEYS:
+                entry = hourly.get(key) or {}
+                rows = entry.get("series") or []
+                payload["series_long"]["keys"][key] = rows if isinstance(rows, list) else []
         self.json(200, payload)
 
     # ---- camera ---------------------------------------------------------- #
