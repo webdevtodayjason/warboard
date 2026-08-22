@@ -556,8 +556,20 @@ a.nm.hf:hover{color:#e8ebf2;border-bottom-color:#c8372d}
 @media(max-width:620px){
   html,body{max-width:100%;overflow-x:hidden}
   :root{--gap:8px}
-  .app{height:auto}
-  .grid{padding:8px;gap:8px}
+  .app{height:auto;min-height:0}
+
+  /* A phone scrolls, so the wall-display sizing model has to go entirely:
+     grid AREAS and proportional flex (flex:5 1 0) both assume a fixed-height
+     viewport. With a 0 basis in an auto-height column the panels claim no
+     height and paint on top of each other. Plain document flow instead —
+     one flex column, explicit order, every panel sized by its own content. */
+  .grid{display:flex;flex-direction:column;padding:8px;gap:8px;height:auto;min-height:0;flex:0 0 auto}
+  .a-aor{order:1}.a-wire{order:2}.a-dev{order:3}
+  .a-sitrep{order:4}.a-right{order:5}.a-ask{order:6}
+  .grid>*{flex:0 0 auto;height:auto;min-height:0;max-height:none}
+  .col-right{display:flex;flex-direction:column;gap:8px;height:auto;min-height:0}
+  .col-right>*{flex:0 0 auto;height:auto;min-height:0;max-height:none}
+  .panel{position:relative;overflow:hidden}
 
   /* top bar: brand + mission on one line, status + clocks below */
   .topbar{padding:8px 10px;gap:6px}
@@ -582,11 +594,8 @@ a.nm.hf:hover{color:#e8ebf2;border-bottom-color:#c8372d}
   .ph{padding:8px 10px}.ph .t{font-size:10px}
   .a-wire .pbody{max-height:70vh}
   .a-dev .pbody{max-height:46vh}
-  .col-right{gap:8px}
-  .unit{max-height:none;min-height:0}
   .unit .pbody{max-height:none;overflow:visible}
   .unit::after{display:none}          /* scroll-fade is meaningless once it is not capped */
-  .oplog{min-height:0}
   .opbody{max-height:44vh}
   .sitbody{max-height:40vh}
   #askOut{max-height:50vh}
