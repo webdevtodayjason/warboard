@@ -2,9 +2,12 @@
 # warboard-wake.service body (runs every 3 min via warboard-wake.timer).
 #
 # The device boots with its encrypted data volume CLOSED. The TiinyOS desktop app
-# normally opens it by calling POST /api/v1/auth/login on connect — headless there
-# is nobody to do that, so the whole AI stack stays down after every power event.
-# This script performs that login itself, then loads the models.
+# normally opens it on connect by authenticating to authd — headless there is
+# nobody to do that, so the whole AI stack stays down after every power event.
+# This script performs that unlock itself, then loads the models.
+# (NB: POST /api/v1/auth/login, documented on dev.tiiny.ai, does NOT exist on
+# shipping firmware — it is absent from every service's own OpenAPI spec. The
+# real route is /api/v1/account/auth on authd; see the note below.)
 #
 # Needs in /etc/warboard.env (0600): TIINY_HOST TIINY_KEY TIINY_USER TIINY_PASS
 set -u

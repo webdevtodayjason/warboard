@@ -1,0 +1,579 @@
+<!doctype html><html lang=en><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>WARBOARD — Post-Mortem &amp; Runbook</title>
+<style>
+:root{--bg:#f7f7f5;--card:#fff;--ink:#1c1c1a;--mut:#6b6b66;--line:#e3e3de;--acc:#c2410c;--accbg:#fff4ed;
+      --ok:#166534;--okbg:#f0fdf4;--crit:#b91c1c;--critbg:#fef2f2;--info:#1e40af;--infobg:#eff6ff;--code:#f4f4f1}
+@media(prefers-color-scheme:dark){:root{--bg:#161614;--card:#1f1f1c;--ink:#ececea;--mut:#a1a19a;--line:#33332e;
+      --acc:#fb923c;--accbg:#2a1a0f;--ok:#4ade80;--okbg:#122017;--crit:#f87171;--critbg:#2a1315;
+      --info:#93c5fd;--infobg:#111a2e;--code:#15151a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;
+     font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+.wrap{max-width:900px;margin:0 auto;padding:34px 20px 90px}
+header{border-bottom:2px solid var(--line);padding-bottom:18px;margin-bottom:10px}
+h1{font-size:28px;margin:0 0 6px;letter-spacing:-.02em}
+.sub{color:var(--mut);font-size:14px}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--mut);margin:34px 0 8px;
+   border-top:1px solid var(--line);padding-top:22px}
+h3{font-size:17px;margin:22px 0 6px;letter-spacing:-.01em}
+section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:12px 0}
+p{margin:0 0 12px}
+ul,ol{margin:8px 0;padding-left:22px}li{margin:7px 0}
+b{color:var(--ink)}
+code{background:var(--code);padding:1.5px 6px;border-radius:4px;font-size:13.5px;
+     font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:13px 15px;
+    overflow-x:auto;font-size:13px;line-height:1.6;margin:10px 0}
+pre code{background:none;padding:0}
+.lede{font-size:17.5px;line-height:1.6}
+.tag{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 9px;border-radius:20px;
+     text-transform:uppercase;letter-spacing:.05em;vertical-align:middle;margin-left:8px}
+.t-ok{background:var(--okbg);color:var(--ok)}.t-crit{background:var(--critbg);color:var(--crit)}
+.t-info{background:var(--infobg);color:var(--info)}.t-acc{background:var(--accbg);color:var(--acc)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:14px 0}
+.stat{background:var(--accbg);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+.stat .n{font-size:23px;font-weight:700;color:var(--acc);font-variant-numeric:tabular-nums;line-height:1.2}
+.stat .l{font-size:11.5px;color:var(--mut);margin-top:2px}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+td.id{font-weight:700;color:var(--acc);white-space:nowrap}
+.sev{font-size:10.5px;font-weight:700;letter-spacing:.04em;white-space:nowrap}
+.sev.c{color:var(--crit)}.sev.h{color:var(--acc)}.sev.m{color:var(--mut)}
+.tl{position:relative;padding-left:26px;margin:6px 0}
+.tl::before{content:"";position:absolute;left:7px;top:0;bottom:0;width:2px;background:var(--line)}
+.ev{position:relative;padding:9px 0}
+.ev::before{content:"";position:absolute;left:-23px;top:16px;width:9px;height:9px;border-radius:50%;
+     background:var(--acc);box-shadow:0 0 0 3px var(--bg)}
+.ev.bad::before{background:var(--crit)}.ev.good::before{background:var(--ok)}
+.ev .t{font-size:11.5px;color:var(--mut);font-variant-numeric:tabular-nums;letter-spacing:.04em}
+.ev .h{font-weight:650;margin:1px 0 2px}
+.ev .d{font-size:14px;color:var(--mut);line-height:1.55}
+.box{border-left:3px solid var(--acc);background:var(--accbg);padding:12px 15px;border-radius:0 8px 8px 0;margin:14px 0}
+.box.crit{border-color:var(--crit);background:var(--critbg)}
+.box.ok{border-color:var(--ok);background:var(--okbg)}
+.box .h{font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:5px}
+.box.crit .h{color:var(--crit)}.box.ok .h{color:var(--ok)}.box .h{color:var(--acc)}
+a{color:var(--acc)}
+.toc{columns:2;column-gap:26px;font-size:14px}
+.toc a{display:block;padding:3px 0;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.foot{color:var(--mut);font-size:13px;margin-top:30px;border-top:1px solid var(--line);padding-top:16px}
+.machine{color:var(--mut);font-size:12.5px;font-style:italic}
+@media(max-width:600px){.toc{columns:1}}
+</style></head><body><div class=wrap>
+
+<header>
+<h1>WARBOARD — Post-Mortem &amp; Runbook</h1>
+<div class=sub>Building a production OSINT intelligence board on a pocket-sized NPU appliance, and everything
+that broke along the way · Jason Brashear (Titanium Computing) · 2026-08-21<br>
+Live board: <a href="https://warboard.semfreak.dev">warboard.semfreak.dev</a> ·
+Source: <a href="https://github.com/webdevtodayjason/warboard">github.com/webdevtodayjason/warboard</a></div>
+</header>
+
+<p class=lede>The plan was a week-long burn-in. The Tiiny vendor asked for real-world testing before GA, so
+instead of running synthetic loops we gave the device an actual job: read the world's news, around the clock,
+and publish what it finds. What we got was a working product in one evening — and five device findings that
+only surface when you stop babysitting the hardware and try to <em>deploy</em> it.</p>
+
+<div class=grid>
+  <div class=stat><div class=n>1,095+</div><div class=l>articles ingested</div></div>
+  <div class=stat><div class=n>3</div><div class=l>AI models resident on one NPU</div></div>
+  <div class=stat><div class=n>27</div><div class=l>live OSINT feeds</div></div>
+  <div class=stat><div class=n>5</div><div class=l>device findings filed</div></div>
+  <div class=stat><div class=n>~4 h</div><div class=l>concept to public URL</div></div>
+</div>
+
+<h2>Contents</h2>
+<section class=toc>
+<a href="#what">1. What we built</a>
+<a href="#timeline">2. Timeline of the evening</a>
+<a href="#unlock">3. The headline failure: headless unlock</a>
+<a href="#lessons">4. What broke, and what it taught us</a>
+<a href="#findings">5. Findings for the vendor</a>
+<a href="#runbook">6. Repeatable setup runbook</a>
+<a href="#state">7. Current system state</a>
+</section>
+
+<h2 id=what>1. What we built</h2>
+<section>
+<p><b>WARBOARD</b> is a live OSINT world-news board where every drop of AI runs on a Tiiny Pocket — a
+palm-sized edge appliance with an NPU. No cloud inference is called, ever.</p>
+<ul>
+<li><b>Ingest:</b> 27 free feeds — world wires, conflict reporting, CISA cyber advisories, NWS severe weather,
+USGS seismic, GDACS disasters, volcanic activity, defense and aviation — polled continuously.</li>
+<li><b>Analysis (Ornith-1.0-35B, 50 NPU units):</b> every article gets a one-line summary, a category, a
+combatant-command region (NORTHCOM/EUCOM/CENTCOM/AFRICOM/INDOPACOM/SOUTHCOM/GLOBAL) and a severity S1–S5.</li>
+<li><b>Clustering (Qwen3-Embedding-0.6B, 1 unit):</b> every item is embedded on-device; cosine similarity
+fuses cross-source coverage into "developing stories," which Ornith then titles.</li>
+<li><b>Imagery (Z-Image-Turbo, 32 units):</b> click any article and the device paints a photorealistic
+editorial illustration in about eight seconds.</li>
+<li><b>Archive:</b> the pipeline files daily intelligence digests into the device's own Knowledge Base, and a
+public "Ask the Archive" box performs semantic retrieval against that on-device vault.</li>
+<li><b>Telemetry:</b> live NPU load, thermals, tokens burned, an AI ops log narrating every action as it
+happens, and an infrared rack camera pointed at the device doing the work.</li>
+</ul>
+<p>All three models are resident simultaneously — 83 of the device's 100 NPU units — scheduled against each
+other in real time. The backend is pure Python standard library; the front end is a single HTML file. It runs
+on an Orange Pi 6 Plus in a server rack and publishes through a Cloudflare tunnel.</p>
+</section>
+
+<h2 id=timeline>2. Timeline of the evening</h2>
+<section>
+<div class=tl>
+<div class="ev"><div class=t>~13:00 CDT</div><div class=h>Scope: give the device a real job</div>
+<div class=d>A synthetic token-burn loop was rejected as not a real test. The decision: build a production
+workload the vendor could look at — an OSINT board — and let the week-long burn-in <em>be</em> that workload.</div></div>
+
+<div class="ev"><div class=t>13:49</div><div class=h>Nine-agent build fan-out</div>
+<div class=d>Five parallel builders (storage/feeds, device client, daemons, front end, deploy kit) against a
+written interface contract, then a live integrator, two adversarial reviewers and a fixer. The reviewers
+earned their keep: 12 real defects fixed pre-deploy, including stored XSS via hostile feed URLs and a
+model-eviction path that would have silently killed the board on day three.</div></div>
+
+<div class="ev good"><div class=t>15:35</div><div class=h>warboard.semfreak.dev goes live</div>
+<div class=d>Tunnel up, three services running, 105 real articles enriched with zero failures, embedding model
+loaded alongside the chat model on the device NPU.</div></div>
+
+<div class="ev"><div class=t>15:37 – 17:00</div><div class=h>Iteration on the real thing</div>
+<div class=d>Article drawer with on-click AI imagery; hardware tabs for both machines; AI ops log; expand
+modals; social metadata and OG card; the Mission page. Camera brought up — and the first hardware lesson:
+<code>/dev/video0–3</code> are the host SoC's video codec engine, not the webcam. The camera was
+<code>/dev/video4</code>, streaming a "NO SIGNAL" placeholder the whole time.</div></div>
+
+<div class="ev"><div class=t>16:45</div><div class=h>Knowledge Base integration — and a privacy near-miss</div>
+<div class=d>The pipeline began filing intel digests into the device vault. The first public retrieval test
+returned a summary of the owner's <em>private chat history</em> with the device. The vault is one flat
+namespace with no scoping parameter, so any integration exposing retrieval leaks personal content unless it
+filters after the fact. Fixed with a server-side scope; filed as a vendor security request.</div></div>
+
+<div class="ev"><div class=t>17:41</div><div class=h>Hardware moves to the data room</div>
+<div class=d>Clean shutdown, both boxes relocated to the rack. This is where a lab experiment became a
+deployment — and where the interesting failures started.</div></div>
+
+<div class="ev bad"><div class=t>18:42 – 19:30</div><div class=h>The device keeps disappearing</div>
+<div class=d>Three subnets changed underneath us (the Mac on one network, the rack on another, the device's
+Wi-Fi on a third), so several "the device is gone" moments were actually us scanning the wrong network. But
+underneath the noise was a real failure: the device kept coming up with its encrypted volume closed, and once
+came up, worked for ten minutes, then <em>re-locked itself mid-operation</em> with no reboot.</div></div>
+
+<div class="ev good"><div class=t>19:49</div><div class=h>Root cause found and automated away</div>
+<div class=d>The volume is opened by an authd call the desktop app makes on connect. Headless, nobody makes
+it. The endpoint documented publicly does not exist on shipping firmware; the real one is loopback-only. A
+watchdog on the rack host now performs the unlock itself every three minutes. The appliance can finally
+survive a power cut unattended.</div></div>
+</div>
+</section>
+
+<h2 id=unlock>3. The headline failure: a headless device cannot unlock itself</h2>
+<section>
+<div class="box crit">
+<div class=h>Root cause</div>
+<p style="margin:0">The Tiiny's user data lives on an encrypted volume that is opened by
+<code>POST /api/v1/account/auth</code> with <code>{"password": "&lt;master password&gt;"}</code> — a call the
+TiinyOS desktop app makes automatically when it connects. With no app present, nothing makes that call, so
+the device boots with the volume closed: no gateway, no models, no AI stack. The base OS runs fine, which is
+what makes it confusing — the device looks healthy and answers SSH while being functionally dead.</p>
+</div>
+<p>Two details turn an inconvenience into a deployment blocker:</p>
+<ul>
+<li><b>The documented endpoint does not exist on shipping firmware.</b> The public SDK documentation shows
+<code>POST /api/v1/auth/login</code> on port 80. On our unit that path returns <b>502 Bad Gateway</b> — nginx
+is up but nothing is behind it while locked.</li>
+<li><b>The real endpoint is loopback-only.</b> authd listens on <code>127.0.0.1:6666</code> and nowhere else,
+so <em>no remote host can unlock the device</em>. The call has to originate on the device itself.</li>
+</ul>
+<p>Our workaround, now running in production: the rack host holds the device's SSH key and its master
+password in a root-only environment file, and a systemd timer checks every three minutes. If the gateway is
+dark, it SSHes into the device, performs the unlock on loopback, waits for the container stack, then loads
+all three models and lets the pipeline drain its backlog. First real test passed — the device went from
+locked to fully operational with no human involved.</p>
+<div class="box">
+<div class=h>Why this matters beyond us</div>
+<p style="margin:0">Every drop-box, kiosk, branch-office and client-site deployment has the same shape: the
+device is somewhere nobody visits, and power events happen. As shipped, a Tiiny in that role stays dark until
+a person arrives with a laptop. The fix on the vendor side is small — persist the unlock across reboots, or
+expose the auth endpoint on the device's network interfaces so an orchestrator can do it — but until then,
+unattended deployment is not possible without root access to the device.</p>
+</div>
+</section>
+
+<h2 id=lessons>4. What broke, and what it taught us</h2>
+<section>
+<h3>Power delivery is not a solved problem</h3>
+<p>The first hours were lost to a USB dock browning out: a gigabit ethernet adapter and a 512 GB drive on one
+bus-powered hub produced <b>20 disconnects in 42 minutes</b>. Three fixes, in order of surprise: the 140 W
+Apple brick <em>would not power the device on at all</em> (PD profile mismatch) while the 67 W brick does;
+the dock needs its own supply rather than drawing through the device's port budget; and the residual
+whole-hub drops were a bad USB-C cable. After the swap: eight minutes hands-off at zero disconnects.</p>
+<p class=machine>Lesson: whole-hub re-enumeration means cable or connection, not power. Per-device drops mean
+power. The kernel ring buffer tells you which in seconds.</p>
+
+<h3>An appliance that looks healthy can be completely dead</h3>
+<p>Every failure tonight presented identically: SSH works, uptime climbs, the app shows a dashboard — and
+nothing functions. The device knows its state perfectly and exposes almost none of it. That is the same
+pattern as three-quarters of the bugs filed during this beta: internal state that never reaches the user.</p>
+
+<h3>Three subnets will waste an hour of your life</h3>
+<p>The workstation, the rack, and the device's own Wi-Fi were on different networks. Several "the device
+vanished" moments were scans of the wrong subnet. What saved the deployment was building on paths that do not
+depend on addressing: a Tailscale overlay for management, and a USB point-to-point link
+(<code>172.17.7.176/30</code>) between the host and the device that no DHCP lease can disturb.</p>
+<p class=machine>The public board never went down during any of it, because the tunnel dials outbound and the
+data path is a cable.</p>
+
+<h3>Multi-model NPUs need client-side scheduling</h3>
+<p>Running chat, embeddings and image generation on one NPU works — but a Z-Image request issued while Ornith
+is mid-inference fails with device error 150004. There is no queue on the device, so the application has to
+provide one. WARBOARD coordinates with a lease in its database: the pipeline yields before image generation,
+image requests wait out in-flight enrichment, and viewer clicks always win.</p>
+
+<h3>Verify every feed before you ship it</h3>
+<p>Of 14 candidate sources added in the second wave, one had a broken certificate chain and was dropped before
+deploy. Later, Times of Israel began returning 403 to every user agent we tried, from three different networks
+and from the device itself — a CDN bot wall, not something to fight. Jerusalem Post replaced it. Feed errors
+now log once on failure and once on recovery instead of every cycle.</p>
+</section>
+
+<h2 id=findings>5. Findings for the vendor</h2>
+<section id=findings-body>
+<p class=machine>Compiled from the beta tracker; the table below is generated from the filed entries.</p>
+<h3>Tiiny Beta Findings, #018 to #041</h3>
+<table><tr><th>ID</th><th>Title</th><th>Type (as filed)</th><th>Severity</th><th>Justification</th></tr><tr><td class="id">#018</td><td>ASR models accept a start call, then never load, with no error anywhere</td><td>System &amp; Functional Bug</td><td class="sev h"><b>High</b></td><td>An entire feature class (voice input) is dead and the failure is completely silent, so nothing in the UI, the model logs, or the API response tells you why.</td></tr><tr><td class="id">#019</td><td><code>/v1/audio/speech</code> rejects all nine documented speaker names that <code>/v1/synthesize</code> accepts</td><td>Compatibility Issue</td><td class="sev h"><b>High</b></td><td>The OpenAI-compatible surface the vendor advertises in Settings is unusable for TTS, so every third-party tool hits a wall while the native endpoint serves the identical request.</td></tr><tr><td class="id">#020</td><td>The two TTS model names are inverted: &quot;Base&quot; is VoiceClone, &quot;CustomVoice&quot; holds the preset voices</td><td>System &amp; Functional Bug</td><td class="sev m"><b>Medium</b></td><td>The names mean the opposite of what the models do, so the failure mode is loading the wrong model and having every speaker name fail for reasons the descriptions do explain but the store listing does not show.</td></tr><tr><td class="id">#021</td><td>Undocumented <code>default</code> model alias, and the served model is reported as an internal file path</td><td>Compatibility Issue</td><td class="sev h"><b>High</b></td><td>The response always returns <code>../model/model.q8_0.gguf</code> regardless of which model answered, so an agent silently switches models when someone changes the selection in the app and no client can detect it.</td></tr><tr><td class="id">#022</td><td>Loading a model evicts resident models that would have fitted, and there is no lifecycle control in the UI</td><td>System &amp; Functional Bug</td><td class="sev h"><b>High</b></td><td>A 1-unit embedding model was evicted with 45 units free, killing anything using the embeddings endpoint with no signal, and the device already serves an <code>unload_candidate</code> endpoint the loader ignores.</td></tr><tr><td class="id">#023</td><td>Download progress is wrong in the UI, the progress API, and the storage endpoint simultaneously</td><td>System &amp; Functional Bug</td><td class="sev h"><b>High</b></td><td>The progress endpoint returned <code>not_downloaded, 0</code> during an active 17.9 GB download while the device&#x27;s own state file next to it was byte-accurate, so a healthy download is indistinguishable from a dead one.</td></tr><tr><td class="id">#024</td><td>Permanent update prompt advertising 0.1.32 to a device running 0.1.33, which is not in its compatibility list</td><td>System &amp; Functional Bug</td><td class="sev m"><b>Medium</b></td><td>The published index is behind the shipped beta firmware and the client flags &quot;update available&quot; on a bare version mismatch, producing a notification that can never be satisfied and leaving beta units with no working update path.</td></tr><tr><td class="id">#025</td><td>The beta feedback sheet is shared &quot;anyone with the link can edit&quot;, exposing 14 unpatched findings</td><td>Security &amp; Privacy</td><td class="sev c"><b>Critical</b></td><td>A live vulnerability list against a shipping device, four items marked CRITICAL with reproduction steps, is readable and writable by anyone who obtains the URL, the exposure is not revocable after a leak, and the template likely applies to every tester&#x27;s sheet.</td></tr><tr><td class="id">#026</td><td>&quot;Tiiny &amp; PC Network disconnected&quot; is shown when the PC link is healthy and device Wi-Fi is what is down</td><td>System &amp; Functional Bug</td><td class="sev m"><b>Medium</b></td><td>The message names the one link that is working, sending the user to check the cable, the daemon, and the resolvers, while the device&#x27;s own <code>error</code> field for the real fault is null.</td></tr><tr><td class="id">#027</td><td>The device cannot route out through the tethered host over USB, so it cannot update while cabled to an online Mac</td><td>System &amp; Functional Bug</td><td class="sev m"><b>Medium</b></td><td>The transport already exists in the other direction for the <code>*.tiiny</code> proxy, so a portable device plugged into an online machine still has to join a new Wi-Fi network just to pull an update.</td></tr><tr><td class="id">#028</td><td>A saved auto-connect network at full signal is intermittently not joined, with <code>error</code> null</td><td>System &amp; Functional Bug</td><td class="sev h"><b>High</b></td><td>The device sat on no network with a remembered, in-range, auto-connect SSID available and reported no reason at all, and the reporter&#x27;s 17 Aug correction shows it works sometimes, which makes the feature untrustworthy rather than simply broken.</td></tr><tr><td class="id">#029</td><td>No way to list, add, reorder, or remove saved Wi-Fi networks; a network is only visible when in range</td><td>System &amp; Functional Bug</td><td class="sev m"><b>Medium</b></td><td>Every plausible saved-network endpoint 404s, so a portable unit cannot be provisioned for multiple sites in advance and a client network cannot be removed once you leave that site.</td></tr><tr><td class="id">#030</td><td><code>npus[0].utilization_percent</code> always reads 0.0, including during a 46.5s continuous generation</td><td>System &amp; Functional Bug</td><td class="sev m"><b>Medium</b></td><td>Memory figures in the same object are live and correct while utilization is permanently zero, removing the only signal for deciding whether the accelerator is busy or whether it is safe to load another model.</td></tr><tr><td class="id">#031</td><td>The 48 GB NPU / 32 GB SoC memory split is not exposed in <code>device_info</code> or the app</td><td>System &amp; Functional Bug</td><td class="sev m"><b>Feedback</b></td><td>The reporter explicitly corrected this on the record and withdrew the misrepresentation claim, leaving a reporting request: the 48 GB NPU pool is the number that governs whether a model fits, and only the board photo shows it.</td></tr><tr><td class="id">#032</td><td>Import pause/resume is broken, resumability is per stage, and the play button stops reaching the backend</td><td>System &amp; Functional Bug</td><td class="sev h"><b>High</b></td><td>The UI offers pause during a stage the backend reports <code>resumable: false</code>, so pause is silently destructive, and once retries are exhausted a click never writes to the job record at all while the app still draws it as an active download.</td></tr><tr><td class="id">#033</td><td>The importer constructs shard filenames instead of reading <code>model.safetensors.index.json</code></td><td>System &amp; Functional Bug</td><td class="sev h"><b>High</b></td><td>Qwen&#x27;s own official Qwen3.5-9B repo, listed as supported in the Import dialog, names its shards <code>model.safetensors-0000N-of-00004.safetensors</code>, so the importer 404s on a pattern-built name and the flagship supported model cannot be imported from where it lives.</td></tr><tr><td class="id">#034</td><td>A failed import with retries exhausted renders as a live download with a moving progress bar</td><td>System &amp; Functional Bug</td><td class="sev h"><b>High</b></td><td>The backend has recorded <code>error_code</code>, <code>error_message</code>, and three spent retries, none of which reach the UI, so the reasonable user action is to wait and waiting can never succeed; the same response also carries two contradictory progress figures.</td></tr><tr><td class="id">#035</td><td>&quot;This architecture is not supported yet&quot; names neither the architecture found nor the one expected</td><td>System &amp; Functional Bug</td><td class="sev m"><b>Medium</b></td><td>The rejection itself is correct and fails fast before an 18 GB download, but the device already knows both values (the toolkit whitelist is exactly one string) and shows neither, leaving a user without a terminal no path forward.</td></tr><tr><td class="id">#036</td><td>All three automatic retries are burned in 32 seconds on a transient HTTP 403, then the job is dead</td><td>System &amp; Functional Bug</td><td class="sev h"><b>High</b></td><td>A CDN 403 is usually transient and location-dependent (the same toolkit succeeded on the home network and 403&#x27;d from the office), yet a multi-hour job spends its entire retry budget inside half a minute and then requires a human.</td></tr><tr><td class="id">#037</td><td>A fully downloaded, verified 5.9 GB toolkit is discarded when its import job is deleted</td><td>System &amp; Functional Bug</td><td class="sev m"><b>Medium</b></td><td>The toolkit is keyed by id and sha256 and is identical for every Qwen3.5-9B import, so every retry re-pays 5.9 GB before reaching the model stage, which compounds badly given how many ways an import can currently fail.</td></tr><tr><td class="id">#038</td><td>The app reaches the device only through a pcsvr-managed <code>.tiiny</code> DNS name, with no IP or host fallback</td><td>Feedback / Enhancement</td><td class="sev h"><b>High</b></td><td>If the <code>/etc/resolver</code> entry is absent, disabled, or stale, the app shows &quot;Failed to connect device&quot; with no way to recover or point at an IP, even though the device answers on IP and SSH; in this instance the resolver had been disabled locally by the tester, so the finding is the missing fallback, not the resolver failure, and the same gap blocks a LAN-only (no USB) unit entirely.</td></tr><tr><td class="id">#039</td><td>Z-Image-Turbo fails with error 150004 at every resolution except 512x512, including all documented sizes</td><td>Bug</td><td class="sev h"><b>High</b></td><td>The model card lists 1024x1024, 768x432, 768x480 and 640x480 as verified, but every size except 512x512 fails after a flat ~30s with <code>{&quot;code&quot;:150004}</code> on an idle NPU, which reads like a graph-compile timeout and suggests only the native 512x512 graph shipped for the NPU runtime.</td></tr><tr><td class="id">#040</td><td><code>/kb/retrieve</code> has no source scoping, so any integration holding the API key can search private chat summaries</td><td>Security / Feature Request</td><td class="sev c"><b>Critical</b></td><td>One flat namespace and one API key mean automatic daily summaries of the owner&#x27;s private Chat conversations are returned alongside file content, confirmed by a live repro where a public-facing &quot;Ask the Archive&quot; feature surfaced the owner&#x27;s private conversation to what would have been the open internet.</td></tr><tr><td class="id">#041</td><td>Encrypted data volume cannot be unlocked headlessly, and re-locked itself mid-operation after an unattended boot</td><td>Bug - Critical</td><td class="sev c"><b>Critical</b></td><td>Unlock is only reachable from the device itself (see resolution below), so a headless unit cannot self-recover from a power event, and the reported mid-run re-lock at ~10 minutes took the whole AI stack down while <code>uptime</code> kept counting.</td></tr></table>
+<p>Type strings are abbreviated from the CSV: <em>System &amp; Functional Bug (Crash / Freeze / Feature Failure / Connectivity etc.)</em>, <em>Compatibility Issue (Specific OS / Tools / Peripherals Not Working)</em>, <em>Security &amp; Privacy Concern (Data Risk / Permission Anomaly / Compliance)</em>. Severity is my assessment and is independent of the filed type.</p>
+<p>---</p>
+<h3>Headline findings</h3>
+<p><b>1. #041, a headless unit cannot unlock its own data volume, so it cannot survive a power event.</b> The unlock is <code>POST /api/v1/account/auth</code> to authd with body <code>{&quot;password&quot;:&quot;&lt;master password&gt;&quot;}</code>, and authd binds <code>127.0.0.1:6666</code> only, so the call has to originate on the device. This supersedes the heartbeat theory in the original report: no remote host, no monitoring system, and no orchestrator can unlock the box, which means every power cut leaves a rack-mounted unit dark until a human intervenes. The only working recovery today is an external machine that holds an SSH key and the device master password in cleartext and shells in to curl loopback, which is a worse security posture than the vendor shipping a real unattended-unlock option.</p>
+<p><b>2. #040, knowledge base retrieval has no privacy boundary.</b> <code>/kb/retrieve</code> searches one flat namespace with one API key, mixing uploaded files, the preloaded user guide, and automatic daily summaries of the owner&#x27;s private Chat conversations. An unattended device is exactly the case where retrieval is exposed to something else, a dashboard, an agent, or an MCP tool, and the owner is not watching what comes back. This already leaked a private conversation summary into a public-facing feature in testing, and client-side filename filtering is a workaround rather than a boundary. Source scoping on the query, per-source visibility flags, private-by-default conversation summaries, and per-integration scoped keys would each close part of it.</p>
+<p><b>3. #025, the tester feedback sheet is world-readable and world-writable.</b> Its permissions are <code>{&quot;role&quot;:&quot;writer&quot;,&quot;type&quot;:&quot;anyone&quot;}</code>, confirmed against the Drive API and proven writable from an unrelated service account. It currently holds fourteen unpatched findings against shipping hardware, four marked CRITICAL, with reproduction steps, which is a ready-made attack guide for any fleet of these devices sitting unattended in racks and offices. The link only has to leak once and the exposure cannot be revoked retroactively, so this needs restricting to named accounts and an audit of every other tester sheet built from the same template.</p>
+<p><b>4. #038, there is no way to address the device except through a host-level DNS hack.</b> The app resolves <code>api.tiiny</code> only because pcsvr writes <code>/etc/resolver</code> entries on the paired Mac, and if that entry is missing, disabled, or stale the app shows &quot;Failed to connect device&quot; with no manual host or IP override anywhere in the UI. In this case the tester had disabled the resolver himself, so the finding is not that pcsvr failed, it is that a fully reachable device (answering on IP and on SSH) becomes unmanageable from the app with no recovery path. An unattended deployment is LAN-only by definition, with no USB host and no desktop app on the subnet, which the current connection model does not support at all.</p>
+<p><b>5. #022, loading a model silently evicts models that did not need evicting.</b> Starting a 55-unit model cleared both a 47-unit model, which genuinely had to go, and a 1-unit embedding model, which fitted in the 45 units left over. Nothing anywhere reports the eviction, so an unattended deployment loses its embeddings or OCR endpoint mid-flight because somebody picked a different model in a chat dropdown. The device already exposes <code>GET /api/v1/models/{id}/unload_candidate</code>, which appears purpose-built to answer exactly this question, and the vendor&#x27;s own chat assistant confirms multi-model residency is intended, so this is a defect rather than a design limit.</p>
+<p><b>6. #028, the device does not reliably rejoin a saved network and never says why.</b> A remembered SSID with auto-connect enabled, sitting at signal 100, was not joined, and <code>connection_status</code> returned <code>is_connected: false</code> with <code>error: null</code>. The 17 Aug follow-up confirms it does auto-join sometimes, and the tester&#x27;s hypothesis is that losing an association in place fails to trigger a rescan while a clean power-down and move does. For a Wi-Fi-only appliance left in a rack, an association that drops and never re-establishes means the unit is simply gone, and the null error field means there is nothing to alert on even if something is watching.</p>
+<p>Just below the line: <b>#033</b> (Qwen&#x27;s own official repo, advertised as supported, cannot be imported because shard names are pattern-built instead of read from <code>model.safetensors.index.json</code>) and the <b>#034 + #036</b> pair (a dead import is drawn as a live download, and its three retries are spent in 32 seconds on a transient 403). Together those make unattended provisioning fail silently and permanently.</p>
+<p>---</p>
+<h3 style='font-size:15px'>Verification notes on #041</h3>
+<p>The device is unreachable from this workstation right now (<code>172.17.7.177</code>, <code>192.168.100.70</code>, and <code>192.168.1.158</code> all fail to ping), so this is corroboration from captured artifacts rather than a live call:</p>
+<ul>
+<li><code>/Users/sem/code/tiiny/warboard/deploy/wake-check.sh</code> is the shipping workaround and documents the mechanism first-hand: authd on <code>127.0.0.1:6666</code> only, <code>nginx :80</code> 502s that path, payload <code>{&quot;password&quot;: &quot;&lt;master password&gt;&quot;}</code>, success returns an attestation token, <code>/dev/mapper/userdata_crypt</code> appears, compose stack starts.</li>
+<li><code>/Users/sem/code/tiiny/RUNBOOK.md</code> independently confirms the loopback bind from an on-device socket capture: ports 3001, 6666 and 8777 are loopback-only while SSH, the Docker manager and the inference ports bind wildcard.</li>
+<li><code>/api/v1/auth/login</code> appears in <b>none</b> of the six captured service specs (<code>openapi.json</code>, <code>spec-5003/5005/8004/8800/8880.json</code>), which supports the claim that the dev.tiiny.ai-documented path does not exist on shipping firmware.</li>
+<li>One nuance worth pinning before this goes to the vendor: the July capture recorded <code>:80 /api/v1/account/auth</code> as <code>deprecated: true</code> in the port-80 OpenAPI spec, returning <code>{&quot;detail&quot;:&quot;Account APIs have migrated to authd. Use authd account and token flows.&quot;}</code>, whereas the 21 Aug note records a 502 from nginx for the same path. Both mean the path is unusable remotely, but the response changed across the OTA, so quote whichever you can re-measure.</li>
+<li>The corrected mechanism explains the no-self-recovery half of #041. It does <b>not</b> by itself explain the observed re-lock ten minutes into a continuous boot with no reboot, which remains open.</li>
+</ul>
+<h3 style='font-size:15px'>Data hygiene in the source CSV</h3>
+<ul>
+<li>Row <b>#033</b> has the literal string <code>High</code> in its <em>Description</em> column where every other row carries the environment blurb. The severity appears to have been typed into the wrong field, and the environment detail for that row is lost.</li>
+<li>Row <b>#019</b> contains a second, unrelated item appended on 17 Aug: the Gmail connector OAuth relay through <code>gemail.tiiny-svr.com</code> versus the &quot;100% on-device processing&quot; marketing claim, with a request for one disclosure sentence in the connector screen. It is a privacy-disclosure ask stapled onto a TTS API bug and should be split into its own row before this goes to the vendor.</li>
+<li>Fixed while verifying: <code>/Users/sem/code/tiiny/warboard/deploy/wake-check.sh</code> line 5 still asserted the app calls <code>POST /api/v1/auth/login</code>, contradicted by the corrected note 17 lines below in the same file. Comment-only edit, no functional change.</li>
+</ul>
+</section>
+
+<h2 id=runbook>6. Repeatable setup runbook</h2>
+<section id=runbook-body>
+<h3>WARBOARD — Rebuild-From-Zero Runbook</h3>
+<p>Derived from the source tree at <code>/Users/sem/code/tiiny/warboard</code> and from the live host (Orange Pi 6 Plus, Tailscale <code>100.98.116.125</code>) as inspected 2026-08-21. Everything marked <b>[FIRMWARE]</b> depends on TiinyOS internals and may move on a device update. Everything marked <b>[DIVERGENCE]</b> is where the running deployment does not match <code>deploy/install.sh</code>.</p>
+<p>---</p>
+<h3>A. What you need</h3>
+<p><b>Hardware</b></p>
+<table><tr><th>Item</th><th>What it is</th><th>Notes</th></tr><tr><td>Orange Pi 6 Plus (CIX SKY1, aarch64)</td><td>the host</td><td>live: Ubuntu 26.04 LTS, Python 3.14.4, 72 GB class box. Any arm64 systemd host with Python ≥3.11 works.</td></tr><tr><td>Tiiny AI Pocket Lab (80 GB, 190 TOPS)</td><td>the NPU</td><td>Debian 12 inside, everything in Docker. Serial-bound license.</td></tr><tr><td>USB-C data cable Pi ↔ Tiiny</td><td><b>the actual transport</b></td><td>The Tiiny presents a CDC-NCM interface. On the Pi it is <code>enx02ce2881f302</code> = <code>172.17.7.178/30</code>, device = <code>172.17.7.177</code>. <b>[DIVERGENCE]</b> README/CONTRACT/<code>install.sh</code> all default <code>TIINY_HOST=192.168.1.158</code> (LAN). The live deployment uses the USB address. LAN works too; USB is faster and survives DHCP drift.</td></tr><tr><td>InnoMaker U20CAM-1080PD USB camera</td><td>rack cam</td><td>UVC, MJPEG 1280x720.</td></tr><tr><td>Wired LAN to the Pi</td><td>uplink</td><td>live: <code>enp97s0</code> = <code>192.168.0.116/24</code>, plus Tailscale <code>100.98.116.125</code>.</td></tr></table>
+<p><b>Accounts</b></p>
+<ul>
+<li>Cloudflare account with the zone (here <code>semfreak.dev</code>) — for the named tunnel + DNS.</li>
+<li>Tiiny device: master password + the account username (stored as <code>TIINY_USER</code>/<code>TIINY_PASS</code>), and the static UUID API key.</li>
+<li>No other API keys. All 30 feeds are free and keyless. <code>GNEWS_API_KEY</code> is optional and is <b>not</b> set in the live deployment.</li>
+</ul>
+<p><b>Network assumptions</b></p>
+<ul>
+<li>Pi has outbound HTTPS (feeds + cloudflared + cloudflared install).</li>
+<li>Pi reaches Tiiny on <code>:8800</code> (gateway API), <code>:5003</code> (Knowledge Base), <code>:3588</code> (SSH).</li>
+<li>Nothing inbound. <code>server.py</code> binds <code>127.0.0.1</code> by default; the tunnel is the only path in.</li>
+</ul>
+<p>---</p>
+<h3>B. Prepare the Tiiny device</h3>
+<h3 style='font-size:15px'>B1. Activate and get the API key</h3>
+<ol>
+<li>Power the device on <b>bare</b> — no dock, no hub. Give it ~2 minutes.</li>
+<li>Complete first-run setup in the TiinyOS desktop app; set the <b>master password</b>. Record the account username and password — WARBOARD needs both later (<code>TIINY_USER</code>, <code>TIINY_PASS</code>).</li>
+<li>Settings → API key. Copy the UUID. <b>This one static key authorizes everything on the device, including Docker control. Treat it as a root credential.</b></li>
+</ol>
+<h3 style='font-size:15px'>B2. The unlock reality <b>[FIRMWARE]</b></h3>
+<p>The device boots with its encrypted data volume <b>closed</b>. The AI stack (the whole Docker compose set behind <code>:8800</code>) does not exist until <code>/dev/mapper/userdata_crypt</code> appears.</p>
+<ul>
+<li>The TiinyOS desktop app performs the unlock automatically when it connects. <b>Headless there is nobody to do that</b>, so after every power event the gateway stays dark forever.</li>
+<li>The unlock is <code>POST /api/v1/account/auth</code> with body <code>{&quot;password&quot;: &quot;&lt;master password&gt;&quot;}</code> against <b>authd</b>.</li>
+<li><b>authd listens on <code>127.0.0.1:6666</code> ONLY.</b> Verified from the Pi: port 6666 is closed from off-device; nginx on <code>:80</code> 502s that path. Therefore <b>the unlock call must be executed ON the device over SSH.</b> This is the single non-obvious fact in the whole build.</li>
+<li>Success returns a JSON body containing <code>attestation</code>; <code>/dev/mapper/userdata_crypt</code> appears and compose brings the stack up over the next ~30–300 s.</li>
+</ul>
+<h3 style='font-size:15px'>B3. SSH into the device (needed for §F) <b>[FIRMWARE]</b></h3>
+<p>Port <b>3588</b>, publickey only, user <code>tiiny</code>, root locked.</p>
+<pre><code># from the Pi, generate a dedicated key for this purpose
+sudo ssh-keygen -t ed25519 -N &#x27;&#x27; -f /etc/warboard-tiiny.key -C warboard-wake
+sudo chmod 600 /etc/warboard-tiiny.key
+sudo ssh-keygen -y -f /etc/warboard-tiiny.key      # -&gt; ssh-ed25519 AAAA...</code></pre>
+<p>Install that public key into <code>/home/tiiny/.ssh/authorized_keys</code> on the device (via the desktop app terminal, an existing SSH session, or the Docker Compose Manager on <code>:8880</code>). Then verify:</p>
+<pre><code>sudo ssh -n -i /etc/warboard-tiiny.key -p 3588 -o BatchMode=yes \
+  -o StrictHostKeyChecking=no tiiny@172.17.7.177 &#x27;echo OK; ls /dev/mapper/&#x27;
+# expect: OK  /  control  userdata_crypt</code></pre>
+<p><b>[FIRMWARE]</b> <code>/home</code> is an OverlayFS over a RAUC A/B slot. A firmware update can wipe <code>authorized_keys</code>. Re-install the key after every device update or the wake watchdog silently stops working.</p>
+<h3 style='font-size:15px'>B4. Models and NPU cost</h3>
+<p>Budget is <b>100 NPU units</b>. WARBOARD runs three models:</p>
+<table><tr><th>Model</th><th>Role</th><th>NPU units</th></tr><tr><td><code>deepreinforce-ai/Ornith-1.0-35B</code></td><td>chat: summary, category, COCOM region, severity, cluster labels, SITREP</td><td><b>50</b></td></tr><tr><td><code>Tongyi-MAI/Z-Image-Turbo</code></td><td>on-click article imagery, 512×512 only</td><td><b>32</b></td></tr><tr><td><code>Qwen/Qwen3-Embedding-0.6B</code></td><td>embeddings for developing-story clustering</td><td><b>1</b></td></tr><tr><td></td><td><b>total</b></td><td><b>83 / 100 — 17 free</b></td></tr></table>
+<p>Verified live:</p>
+<pre><code>curl -s -H &quot;Authorization: Bearer $TIINY_KEY&quot; \
+  http://$TIINY_HOST:8800/api/v1/models/npu/status | python3 -m json.tool
+# npu_total 100, npu_used 83, npu_available 17, all three &quot;status&quot;:&quot;running&quot;</code></pre>
+<p>Loading them:</p>
+<pre><code># embedder only, with download + verify (idempotent, safe any time)
+bash /opt/warboard/load-models.sh
+
+# all three, with proof-of-life on chat + embeddings + image
+TIINY_KEY=&lt;key&gt; bash /opt/warboard/deploy/wake-tiiny.sh 172.17.7.177</code></pre>
+<p><code>load-models.sh</code> percent-encodes the model id (<code>Qwen%2FQwen3-Embedding-0.6B</code>) — <b>the device 404s on a literal slash in the path.</b> Download budget in the script is 2400 s for ~1.2 GB; start budget 300 s. Model loads take 30–90 s each.</p>
+<p><b>Device behaviour that shapes the whole design:</b></p>
+<ul>
+<li><b>No batching.</b> One inference at a time, ~24 tok/s. Enrichment is a strictly serial queue; parallelising makes it slower.</li>
+<li><b>Chat and image generation cannot overlap.</b> A concurrent request returns device error <code>150004</code>. <code>server.py</code> and <code>pipeline.py</code> negotiate through two DB meta keys — <code>img_hold_until</code> and <code>enrich_busy_until</code> — plus a 3-attempt retry with 6 s gaps.</li>
+<li><b>Ornith reasoning quirk.</b> Reasoning lands in <code>message.reasoning_content</code> and counts against <code>max_tokens</code>, leaving <code>content</code> empty. <code>enrich.py</code> sends <code>chat_template_kwargs.enable_thinking=false</code> first (~50 tokens, 5–24 s), and only on failure retries with reasoning on at 2400 tokens, scavenging the trailing <code>{...}</code> from the reasoning trace. <code>TIINY_NOTHINK=0</code> disables the fast path.</li>
+<li><b>512×512 is the only resolution Z-Image-Turbo produces</b> on this firmware. The UI crops to 16:9 with <code>object-fit</code>.</li>
+</ul>
+<p>---</p>
+<h3>C. Prepare the host</h3>
+<pre><code>sudo apt-get update
+sudo apt-get install -y python3 ustreamer v4l-utils curl
+python3 -V     # must be &gt;= 3.11 ; live host is 3.14.4</code></pre>
+<p>Live versions: <code>ustreamer 5.4-1build2</code>, <code>v4l-utils 1.32.0-2ubuntu1</code>, <code>cloudflared 2026.8.2</code> (arm64).</p>
+<p><code>sqlite3</code> CLI is <b>not</b> installed on the live Pi. Install it if you want to poke the DB by hand (<code>sudo apt-get install -y sqlite3</code>), otherwise use <code>python3 -c &#x27;import sqlite3...&#x27;</code>.</p>
+<p>No pip, no venv, no Node, no build step. The entire backend is Python <b>stdlib only</b> — do not add dependencies.</p>
+<p><code>install.sh</code> creates the service account and directories itself:</p>
+<ul>
+<li>system user + group <code>warboard</code>, nologin shell, home <code>/opt/warboard</code>, supplementary group <code>video</code></li>
+<li><code>/opt/warboard</code> <code>0775 root:warboard</code> — group-writable because the sqlite WAL sidecars live there</li>
+<li><code>/opt/warboard/static</code> <code>0775 root:warboard</code></li>
+<li><code>/opt/warboard/deploy</code> <code>0755 root:root</code></li>
+</ul>
+<p>---</p>
+<h3>D. Install WARBOARD</h3>
+<h3 style='font-size:15px'>D1. Copy and run the installer</h3>
+<pre><code>rsync -a --delete ~/code/tiiny/warboard/ sem@100.98.116.125:/opt/warboard-src/
+ssh sem@100.98.116.125 &#x27;sudo bash /opt/warboard-src/deploy/install.sh&#x27;</code></pre>
+<p><code>install.sh</code> is idempotent — re-run after every code change. It re-copies files, reinstalls units, restarts services, and never touches <code>/etc/warboard.env</code>.</p>
+<p>What it actually copies: <code>schema.sql db.py feeds.py enrich.py pipeline.py server.py static/index.html</code>, plus <code>deploy/load-models.sh</code> → <b><code>/opt/warboard/load-models.sh</code></b> (top level, not <code>deploy/</code>), plus <code>deploy/TUNNEL.md</code> and <code>deploy/cloudflared-config.yml</code> → <code>/opt/warboard/deploy/</code>.</p>
+<p><b>[DIVERGENCE] — five things <code>install.sh</code> does not do, that the live box has:</b></p>
+<ol>
+<li><code>static/og.png</code> is not in <code>APP_FILES</code>, but <code>server.py</code> serves <code>GET /og.png</code>. Copy it by hand.</li>
+<li><code>deploy/wake-tiiny.sh</code> and <code>deploy/wake-check.sh</code> are never copied — <code>wake-check.sh</code> hard-references <code>/opt/warboard/deploy/wake-tiiny.sh</code>. Copy both by hand (§F).</li>
+<li><code>warboard-wake.service</code> / <code>.timer</code> are not in <code>UNITS</code>. Install by hand (§F).</li>
+<li><code>/opt/warboard/images/</code> is not created. <code>server.py</code> creates it on the first generation; on the live box it ends up <code>warboard:warboard</code>.</li>
+<li><code>/opt/warboard/deploy/relock-probe.sh</code> exists on the Pi and is <b>not in the repo at all</b> — a small loop that appends gateway UP/DOWN transitions to <code>/var/log/tiiny-relock.log</code> as evidence for the relock bug. Reproduce it if you want that evidence trail.</li>
+</ol>
+<pre><code># fix 1, 2, 4 after install.sh
+sudo install -o root -g root -m 0644 /opt/warboard-src/static/og.png /opt/warboard/static/og.png
+sudo install -o root -g root -m 0755 /opt/warboard-src/deploy/wake-tiiny.sh  /opt/warboard/deploy/wake-tiiny.sh
+sudo install -o root -g root -m 0755 /opt/warboard-src/deploy/wake-check.sh  /opt/warboard/deploy/wake-check.sh
+sudo install -d -o warboard -g warboard -m 0755 /opt/warboard/images</code></pre>
+<h3 style='font-size:15px'>D2. <code>/etc/warboard.env</code></h3>
+<p><code>0640 root:warboard</code> — systemd reads it as root before dropping privileges; the <code>warboard</code> group needs read.</p>
+<p><b>The live file has exactly these 8 keys</b> (verified; values withheld):</p>
+<table><tr><th>Key</th><th>Purpose</th><th>Live value</th></tr><tr><td><code>TIINY_HOST</code></td><td>device host only, port is hardcoded 8800</td><td><code>172.17.7.177</code> <b>[DIVERGENCE]</b> — installer template writes <code>192.168.1.158</code></td></tr><tr><td><code>TIINY_KEY</code></td><td><b>required.</b> Device bearer. Server-side only, never reaches the browser</td><td><em>(secret)</em></td></tr><tr><td><code>WARBOARD_DB</code></td><td>sqlite path</td><td><code>/opt/warboard/warboard.db</code></td></tr><tr><td><code>PORT</code></td><td><code>server.py</code> listen port</td><td><code>8811</code></td></tr><tr><td><code>CAM_URL</code></td><td>ustreamer origin proxied by <code>/cam.mjpg</code></td><td><code>http://127.0.0.1:8812</code></td></tr><tr><td><code>HOST_MODEL</code></td><td>marketing name for the TIINY UNIT panel; overrides device-tree/DMI (this board boots ACPI, where DMI reports the CIX reference-design name)</td><td><code>&quot;Orange Pi 6 Plus&quot;</code></td></tr><tr><td><code>TIINY_USER</code></td><td>device account name, for the wake watchdog</td><td><em>(account name)</em></td></tr><tr><td><code>TIINY_PASS</code></td><td><b>device master password</b>, used only by <code>wake-check.sh</code> for the authd unlock</td><td><em>(secret)</em></td></tr></table>
+<p><b>[DIVERGENCE]</b> The installer template writes <code>TIINY_HOST</code>, <code>TIINY_KEY</code>, <code>WARBOARD_DB</code>, <code>PORT</code>, <code>CAM_URL</code> and a commented <code>GNEWS_API_KEY</code> — it does <b>not</b> write <code>HOST_MODEL</code>, <code>TIINY_USER</code>, or <code>TIINY_PASS</code>. Add those three by hand or the wake watchdog cannot unlock the device.</p>
+<p>Read but not present in the live file (defaults apply): <code>BIND</code> (<code>127.0.0.1</code>), <code>IMAGE_MODEL</code> (<code>Tongyi-MAI/Z-Image-Turbo</code>), <code>TIINY_KB_PORT</code> (<code>5003</code>), <code>TIINY_TIMEOUT</code> (<code>180</code>), <code>TIINY_NOTHINK</code> (<code>1</code>), <code>WARBOARD_FETCH_INTERVAL</code> (<code>300</code>), <code>GNEWS_API_KEY</code> (unset).</p>
+<p><b>[DIVERGENCE]</b> <code>wake-check.sh</code>&#x27;s header comment says the env file should be <code>0600</code>. It must <b>not</b> be — <code>install.sh</code> sets <code>0640 root:warboard</code> and the two Python units run as <code>warboard</code>. 0600 breaks them. Keep 0640.</p>
+<h3 style='font-size:15px'>D3. systemd units</h3>
+<p><code>install.sh</code> installs and enables three:</p>
+<table><tr><th>Unit</th><th>Runs</th><th>Key settings</th></tr><tr><td><code>warboard.service</code></td><td><code>python3 /opt/warboard/server.py</code></td><td><code>:8811</code>, <code>Restart=always</code>, <code>RestartSec=5</code>, <code>TimeoutStopSec=20</code></td></tr><tr><td><code>warboard-pipeline.service</code></td><td><code>python3 /opt/warboard/pipeline.py</code></td><td><code>Restart=always</code>, <code>KillSignal=SIGTERM</code>, <code>TimeoutStopSec=45</code> (room for an in-flight inference)</td></tr><tr><td><code>warboard-camera.service</code></td><td>ustreamer</td><td><code>SupplementaryGroups=video</code>, <code>RestartSec=10</code></td></tr></table>
+<p>All three: <code>User/Group=warboard</code>, <code>EnvironmentFile=/etc/warboard.env</code>, <code>Environment=PYTHONUNBUFFERED=1</code> (without it journald shows nothing for minutes), <code>StartLimitIntervalSec=0</code> (never give up after a restart burst during an unattended week), <code>NoNewPrivileges</code>, <code>PrivateTmp</code>, <code>ProtectHome</code>, and <b><code>ProtectSystem=full</code> not <code>strict</code></b> — <code>strict</code> makes <code>/opt</code> read-only and kills the sqlite WAL sidecars.</p>
+<p><code>install.sh</code> writes a drop-in pinning the interpreter if <code>python3</code> is not at <code>/usr/bin/python3</code>, and similarly for <code>ustreamer</code>. Live box: no drop-ins exist; both binaries are at the Debian paths.</p>
+<h3 style='font-size:15px'>D4. Camera device path — this is the trap</h3>
+<p><b><code>/dev/video0</code> through <code>/dev/video3</code> are the CIX SoC codec engine, not a camera.</b> The USB cam enumerates as <code>video4</code>. If ustreamer is pointed at a codec node it streams a NO SIGNAL placeholder forever and never errors.</p>
+<pre><code>ls -l /dev/v4l/by-id/
+# usb-InnoMaker_Innomaker-U20CAM-1080PD_N-S1_20010101-video-index0 -&gt; ../../video4
+# usb-InnoMaker_Innomaker-U20CAM-1080PD_N-S1_20010101-video-index1 -&gt; ../../video5</code></pre>
+<p>Always use the <code>by-id</code> path — it survives node renumbering across reboots. <code>index0</code> is the capture node; <code>index1</code> is metadata.</p>
+<p><code>warboard-camera.service</code> as shipped (and as running):</p>
+<pre><code>ExecStartPre=-/usr/bin/v4l2-ctl -d /dev/v4l/by-id/usb-InnoMaker_Innomaker-U20CAM-1080PD_N-S1_20010101-video-index0 \
+  --set-ctrl=brightness=0 --set-ctrl=contrast=38 --set-ctrl=gamma=300 --set-ctrl=gain=32 \
+  --set-ctrl=backlight_compensation=0 --set-ctrl=auto_exposure=3
+ExecStart=/usr/bin/ustreamer -d /dev/v4l/by-id/usb-InnoMaker_Innomaker-U20CAM-1080PD_N-S1_20010101-video-index0 \
+  -m MJPEG -r 1280x720 -f 15 --host 127.0.0.1 -p 8812</code></pre>
+<p>The <code>v4l2-ctl</code> line is not cosmetic: UVC defaults drift to max gain/gamma and the frame comes back blown-out white. The <code>-</code> prefix makes it non-fatal.</p>
+<p><code>--host 127.0.0.1</code> is load-bearing — only <code>server.py</code> may reach the camera; the browser gets it proxied through <code>/cam.mjpg</code>.</p>
+<p><b>[DIVERGENCE]</b> <code>install.sh</code>&#x27;s &quot;pin ustreamer&quot; drop-in path writes <code>ExecStart=... -d /dev/video0 ...</code>, discarding both the <code>by-id</code> path and the sensor tuning. It does not fire on this host (ustreamer is at <code>/usr/bin</code>), but on a host where ustreamer lives elsewhere it silently breaks the camera. Patch the drop-in template before using it on new hardware.</p>
+<p>Different camera model? Get your own id:</p>
+<pre><code>v4l2-ctl --list-devices
+ls /dev/v4l/by-id/            # pick the *-video-index0 entry for the capture node
+v4l2-ctl -d &lt;by-id path&gt; --list-ctrls   # then retune brightness/contrast/gamma/gain</code></pre>
+<p>---</p>
+<h3>E. Publish it (Cloudflare named tunnel)</h3>
+<p>Full walkthrough in <code>deploy/TUNNEL.md</code>. Condensed, run on the Pi:</p>
+<pre><code>curl -fsSL -o /tmp/cloudflared.deb \
+  https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64.deb
+sudo dpkg -i /tmp/cloudflared.deb &amp;&amp; cloudflared --version
+
+sudo cloudflared tunnel login          # open the printed URL on your laptop, pick the zone
+sudo cloudflared tunnel create warboard
+
+sudo mkdir -p /etc/cloudflared
+TUNNEL_UUID=$(sudo cloudflared tunnel list --output json \
+  | python3 -c &quot;import sys,json;print([t[&#x27;id&#x27;] for t in json.load(sys.stdin) if t[&#x27;name&#x27;]==&#x27;warboard&#x27;][0])&quot;)
+sudo cp &quot;/root/.cloudflared/$TUNNEL_UUID.json&quot; /etc/cloudflared/
+sudo chmod 600 &quot;/etc/cloudflared/$TUNNEL_UUID.json&quot;
+sudo sed &quot;s/&lt;TUNNEL_UUID&gt;/$TUNNEL_UUID/g&quot; /opt/warboard/deploy/cloudflared-config.yml \
+  | sudo tee /etc/cloudflared/config.yml &gt;/dev/null
+
+sudo cloudflared tunnel route dns warboard warboard.semfreak.dev
+# name already taken by a stale CNAME:
+# sudo cloudflared tunnel route dns --overwrite-dns warboard warboard.semfreak.dev
+
+sudo cloudflared service install
+sudo systemctl enable --now cloudflared</code></pre>
+<p>Live tunnel UUID: <code>c38fb8dd-f68a-41dd-9641-6fc0632918a6</code>, credentials <code>0400 root:root</code>.</p>
+<p><b>The ingress config matters for the camera:</b></p>
+<pre><code>ingress:
+  - hostname: warboard.semfreak.dev
+    service: http://localhost:8811
+    originRequest:
+      connectTimeout: 10s
+      disableChunkedEncoding: false   # /cam.mjpg is an endless multipart response
+      keepAliveTimeout: 300s
+      keepAliveConnections: 16
+      noHappyEyeballs: true
+  - service: http_status:404
+no-autoupdate: true                   # an autoupdate restart mid-week is an unwatched outage</code></pre>
+<div class="box"><p style="margin:0"><b>[DIVERGENCE] — the live <code>/etc/cloudflared/config.yml</code> is only 231 bytes and contains just <code>tunnel</code>, <code>credentials-file</code>, and the bare two-rule <code>ingress</code>.</b> It is missing <code>no-autoupdate</code>, <code>loglevel</code>, <code>metrics</code>, and the entire <code>originRequest</code> block. Cloudflare&#x27;s edge cuts a silent request at ~100 s, so without <code>keepAliveTimeout: 300s</code> the rack cam is prone to flickering back to CAM OFFLINE and to 524s. <b>Fix on the live box by re-running the <code>sed</code> step above, then <code>sudo systemctl restart cloudflared</code>.</b></p></div>
+<p>---</p>
+<h3>F. Make it survive power loss</h3>
+<p>The failure mode: mains blips → Tiiny reboots → encrypted volume closed → <code>:8800</code> dark → <code>warboard-pipeline</code> backs off forever. Nothing recovers on its own, because the unlock is normally done by a desktop app that isn&#x27;t there.</p>
+<p><b>Three pieces, none of which <code>install.sh</code> handles. [DIVERGENCE] — all installed by hand on the live box.</b></p>
+<p><b>1. The device SSH key on the host</b> — <code>/etc/warboard-tiiny.key</code>, <code>0600 root:root</code>, ed25519 (§B3). Required because <b>the unlock call has to originate on the device</b>: authd binds <code>127.0.0.1:6666</code> only, and nginx on <code>:80</code> 502s that path. There is no remote way to do it.</p>
+<p><b>2. The watchdog script</b> — <code>/opt/warboard/deploy/wake-check.sh</code> (0755 root). Every tick it:</p>
+<pre><code>GET  http://$TIINY_HOST:8800/api/v1/models/npu/status   (5 s)
+  != 200 and TIINY_PASS set
+    -&gt; ssh -i /etc/warboard-tiiny.key -p 3588 tiiny@$TIINY_HOST
+         curl -X POST -d @- http://127.0.0.1:6666/api/v1/account/auth   ({&quot;password&quot;: &quot;...&quot;})
+       response contains &quot;attestation&quot; -&gt; poll the gateway for up to 300 s
+  still != 200 -&gt; exit 0, retry next tick
+  == 200 and fewer than 3 models running
+    -&gt; bash /opt/warboard/deploy/wake-tiiny.sh $TIINY_HOST</code></pre>
+<p>The password is marshalled through <code>python3 -c &#x27;json.dumps(...)&#x27;</code> via an env var, never interpolated into the shell. All output appends to <code>/var/log/warboard-wake.log</code>.</p>
+<p><b>3. The unit + timer:</b></p>
+<pre><code>sudo install -o root -g root -m 0644 /opt/warboard-src/deploy/warboard-wake.service /etc/systemd/system/
+sudo install -o root -g root -m 0644 /opt/warboard-src/deploy/warboard-wake.timer   /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now warboard-wake.timer
+systemctl list-timers warboard-wake --no-pager</code></pre>
+<p><code>Type=oneshot</code>, <code>EnvironmentFile=/etc/warboard.env</code>, <code>OnBootSec=2min</code> (matches the device&#x27;s ~2 min unlock window after power-on), <code>OnUnitActiveSec=3min</code>.</p>
+<p>Manual recovery, if you&#x27;d rather drive it yourself:</p>
+<pre><code>TIINY_KEY=&lt;key&gt; bash /opt/warboard/deploy/wake-tiiny.sh 172.17.7.177</code></pre>
+<p>Waits up to 300 s for the gateway, starts all three models, waits up to 200 s for RUNNING, then proves chat + embeddings + image generation. It does <b>not</b> perform the authd unlock — do that first, or let <code>wake-check.sh</code> do it.</p>
+<p>Once the models are back, <code>warboard-pipeline</code> recovers on its own within ~5 minutes; <code>sudo systemctl restart warboard-pipeline</code> if you&#x27;re impatient.</p>
+<p>Optional evidence collector, on the live box only:</p>
+<pre><code>sudo nohup /opt/warboard/deploy/relock-probe.sh &amp;   # -&gt; /var/log/tiiny-relock.log</code></pre>
+<p>---</p>
+<h3>G. Verify</h3>
+<p>Run in order. Every expected output below was captured live on 2026-08-21.</p>
+<p><b>1. Feeds</b> — 30 sources, 15 s timeout each, a dead feed never raises.</p>
+<pre><code>cd /opt/warboard &amp;&amp; sudo -u warboard python3 feeds.py</code></pre>
+<p>Expect per-source counts and <code>{&quot;new&quot;: n, &quot;checked&quot;: 30, &quot;errors&quot;: {...}}</code>. Contract floor: ≥5 feeds returning new items. A handful of <code>errors</code> entries is normal.</p>
+<p><b>2. Device reachable, models loaded</b></p>
+<pre><code>source /etc/warboard.env
+curl -s -H &quot;Authorization: Bearer $TIINY_KEY&quot; \
+  http://$TIINY_HOST:8800/api/v1/models/npu/status | python3 -m json.tool</code></pre>
+<p>Expect <code>npu_total: 100</code>, <code>npu_used: 83</code>, <code>npu_available: 17</code>, and all three of Ornith (50), Z-Image-Turbo (32), Qwen3-Embedding (1) at <code>&quot;status&quot;: &quot;running&quot;</code>.</p>
+<p><b>3. Enrichment self-check</b> — one live chat + one embed + device stats:</p>
+<pre><code>cd /opt/warboard &amp;&amp; sudo -u warboard --preserve-env=TIINY_HOST,TIINY_KEY python3 enrich.py</code></pre>
+<p><b>4. Pipeline running</b></p>
+<pre><code>systemctl status warboard warboard-pipeline warboard-camera --no-pager
+journalctl -u warboard-pipeline -n 30 --no-pager</code></pre>
+<p>Expect <code>threads up: fetch, enrich, device, janitor, vault, sitrep</code> and a stream of <code>#NNNN S2 NORTHCOM/disaster 24.5 tok/s — &lt;headline&gt;</code> lines.</p>
+<p><b>5. API</b></p>
+<pre><code>curl -s localhost:8811/healthz
+# {&quot;ok&quot;:true,&quot;ts&quot;:1787360231.2,&quot;db&quot;:&quot;/opt/warboard/warboard.db&quot;}
+
+curl -s localhost:8811/api/stats | python3 -m json.tool | head -40</code></pre>
+<p>Expect <code>counts</code> with <code>items_total</code>, <code>items_24h</code>, <code>enriched_24h</code>, <code>pending</code>, <code>errors_24h: 0</code>, <code>sources_alive_1h</code> ≥ 5; <code>meta.embeddings: &quot;on&quot;</code>; a recent <code>last_fetch_ts</code>; <code>tokens_total</code> climbing; a <code>latest_sitrep</code> paragraph. Live sample: 1101 items, 1071 enriched, 30 pending, 0 errors, 8 sources alive, 60,670 tokens.</p>
+<pre><code>curl -s &#x27;localhost:8811/api/items?limit=3&#x27; | python3 -m json.tool | head -30
+curl -s localhost:8811/api/clusters       | python3 -m json.tool | head -30
+curl -s &#x27;localhost:8811/api/log?limit=3&#x27;  | head -c 400</code></pre>
+<p><code>/api/log</code> returns <code>{&quot;now&quot;: &quot;ENRICHING #1100 — ...&quot;, &quot;images_total&quot;: 7, &quot;events&quot;: [...]}</code> — <code>now</code> is the live &quot;what the NPU is chewing on&quot; string.</p>
+<p><b>6. Image generation</b> (Z-Image-Turbo, one at a time, cached forever on disk)</p>
+<pre><code>curl -s -o /tmp/i.png -w &#x27;%{http_code} %{size_download}\n&#x27; &#x27;localhost:8811/api/item/image?id=&lt;recent id&gt;&#x27;</code></pre>
+<p>Expect <code>200</code> and ~400–650 KB PNG. A <code>202 {&quot;status&quot;:&quot;busy&quot;,&quot;retry_s&quot;:4}</code> means another generation holds <code>_IMG_LOCK</code> — poll back. Cached at <code>/opt/warboard/images/&lt;id&gt;.png</code>; seed = item id, so images are reproducible.</p>
+<p><b>7. Vault (device Knowledge Base on <code>:5003</code>)</b></p>
+<pre><code>curl -s &#x27;localhost:8811/api/ask?q=ukraine&#x27; | head -c 300</code></pre>
+<p>Expect <code>{&quot;question&quot;:&quot;ukraine&quot;,&quot;results&quot;:[{&quot;text&quot;:&quot;Source file: warboard-intel-2026-08-21-partial.md ...</code>. The endpoint hard-filters results to text whose first 80 chars contain <code>warboard-</code> — a <b>privacy boundary</b>, because the device vault also holds the owner&#x27;s personal chat-history summaries. Do not relax it. <code>502 {&quot;error&quot;:&quot;vault unreachable&quot;}</code> means <code>:5003</code> is down.</p>
+<p><b>8. Camera</b></p>
+<pre><code>curl -s -o /dev/null -w &#x27;%{http_code} %{size_download}\n&#x27; localhost:8811/cam.jpg   # 200 71444
+curl -sI 127.0.0.1:8812/snapshot | head -n1                                       # ustreamer direct</code></pre>
+<p><code>503</code> from <code>/cam.jpg</code> = ustreamer down. A 200 that renders as a grey NO SIGNAL card = wrong <code>/dev/video*</code> node (see §D4).</p>
+<p><b>9. Public</b></p>
+<pre><code>curl -sS https://warboard.semfreak.dev/healthz ; echo
+curl -sSI https://warboard.semfreak.dev/ | head -n1
+sudo cloudflared tunnel info warboard        # 2+ connector edges</code></pre>
+<p><b>10. Static analysis gate</b> (the contract&#x27;s DoD)</p>
+<pre><code>cd /opt/warboard-src &amp;&amp; python3 -m py_compile *.py &amp;&amp; bash -n deploy/*.sh &amp;&amp; echo CLEAN</code></pre>
+<p>---</p>
+<h3>H. Operate</h3>
+<p><b>Logs</b></p>
+<pre><code>journalctl -fu warboard-pipeline            # ingest + what the NPU is doing right now
+journalctl -fu warboard -n 100              # HTTP API
+journalctl -fu warboard-camera
+journalctl -u cloudflared -n 50
+sudo tail -f /var/log/warboard-wake.log     # wake watchdog (absent until it first fires)
+sudo tail -f /var/log/tiiny-relock.log      # gateway UP/DOWN transitions, if relock-probe is running</code></pre>
+<p>Both Python units set <code>PYTHONUNBUFFERED=1</code>, so journald is live, not batched.</p>
+<p><b>Restart</b></p>
+<pre><code>sudo systemctl restart warboard warboard-pipeline   # after any code change
+sudo systemctl restart warboard-camera              # camera unplugged / re-enumerated
+sudo systemctl restart cloudflared                  # after editing /etc/cloudflared/config.yml
+bash /opt/warboard/load-models.sh                   # when the board reads EMBEDDINGS OFF</code></pre>
+<p>Nothing needs restarting after <code>load-models.sh</code> — the pipeline picks the embedder up on its next enrichment and flips <code>meta.embeddings</code> to <code>on</code> within a minute or two.</p>
+<p><b>Where the data lives</b></p>
+<table><tr><th>Path</th><th>What</th></tr><tr><td><code>/opt/warboard/warboard.db</code></td><td><b>everything</b> — plus <code>-wal</code> and <code>-shm</code> sidecars, <code>warboard:warboard</code></td></tr><tr><td><code>/opt/warboard/images/</code></td><td>cached Z-Image PNGs, one per item id</td></tr><tr><td><code>/etc/warboard.env</code></td><td>8 keys, <code>0640 root:warboard</code></td></tr><tr><td><code>/etc/warboard-tiiny.key</code></td><td>device SSH key, <code>0600 root:root</code></td></tr><tr><td><code>/etc/systemd/system/warboard*.{service,timer}</code></td><td>5 units</td></tr><tr><td><code>/etc/cloudflared/{config.yml,&lt;uuid&gt;.json}</code></td><td>tunnel</td></tr><tr><td>journald</td><td>every log line, per unit</td></tr></table>
+<p>Schema: <code>items</code>, <code>clusters</code>, <code>metrics</code>, <code>meta</code>, <code>oplog</code>. <b>[DIVERGENCE from CONTRACT.md]</b> the shipped <code>schema.sql</code> also carries <code>items.enrich_attempts</code> and <code>items.enrich_error_at</code> (retry budget) and the whole <code>oplog</code> table (<code>ts, kind, msg</code>, indexed <code>ts DESC</code>) that backs <code>/api/log</code>. Retention: items 21 d, metrics 8 d, orphan clusters — pruned hourly by the janitor thread.</p>
+<pre><code>sudo -u warboard python3 -c &quot;
+import sqlite3;c=sqlite3.connect(&#x27;/opt/warboard/warboard.db&#x27;)
+print(c.execute(&#x27;select count(*) from items&#x27;).fetchone())&quot;</code></pre>
+<p><b>Changing feeds</b> — edit the <code>FEEDS</code> list at the top of <code>feeds.py</code>; each entry is <code>{&quot;name&quot;,&quot;url&quot;,&quot;kind&quot;}</code> with <code>kind</code> in <code>rss|atom|rdf</code>. Then:</p>
+<pre><code>cd ~/code/tiiny/warboard &amp;&amp; python3 feeds.py     # verify the new feed is alive first
+rsync -a --delete ~/code/tiiny/warboard/ sem@100.98.116.125:/opt/warboard-src/
+ssh sem@100.98.116.125 &#x27;sudo bash /opt/warboard-src/deploy/install.sh&#x27;</code></pre>
+<p>Remember to re-apply the §D1 fix-ups (<code>og.png</code>, <code>wake-*.sh</code>) after every <code>install.sh</code> run — it overwrites <code>/opt/warboard/deploy/</code> contents it knows about and leaves the rest, but a <code>--delete</code> rsync to the source tree can drop them from the staging dir.</p>
+<p><b>Triage table</b></p>
+<table><tr><th>Symptom</th><th>Look at</th></tr><tr><td>Wire empty</td><td><code>journalctl -u warboard-pipeline</code> — feed errors, or <code>TIINY_KEY</code> unset</td></tr><tr><td>Items arrive, never get summaries</td><td><code>curl -H &quot;Authorization: Bearer $TIINY_KEY&quot; http://$TIINY_HOST:8800/api/v1/models/running</code></td></tr><tr><td><code>EMBEDDINGS OFF</code> in the bottom bar</td><td><code>bash /opt/warboard/load-models.sh</code></td></tr><tr><td>Everything Tiiny-side dead after a power blip</td><td>device is relocked — <code>sudo systemctl start warboard-wake.service</code>, then read <code>/var/log/warboard-wake.log</code></td></tr><tr><td>Image gen fails with <code>device 150004</code></td><td>NPU busy on chat; the handshake retries 3× — persistent means <code>img_hold_until</code>/<code>enrich_busy_until</code> are stale in <code>meta</code></td></tr><tr><td><code>CAM OFFLINE</code></td><td><code>systemctl status warboard-camera</code>; <code>curl -I 127.0.0.1:8812/snapshot</code></td></tr><tr><td>Cam stalls then 524</td><td>missing <code>originRequest.keepAliveTimeout</code> in the live tunnel config — see §E</td></tr><tr><td>Error 1033 in browser</td><td><code>systemctl status cloudflared</code>; <code>journalctl -u cloudflared -n 50</code></td></tr><tr><td>502 from the edge</td><td><code>server.py</code> down — <code>curl 127.0.0.1:8811/healthz</code></td></tr><tr><td>404 on every public path</td><td>hostname mismatch in <code>/etc/cloudflared/config.yml</code></td></tr></table>
+<p><b>Tuning constants you should not move casually</b></p>
+<ul>
+<li><code>enrich.CLUSTER_THRESHOLD = 0.80</code> cosine. Measured 2026-08-21 against the live embedder over 89 enriched articles (3,916 pairs): every pair ≥0.808 was a genuine same-story match, the next one down at 0.774 was junk, and it sat between genuine matches at 0.724 and 0.720. The 0.72–0.78 band is mixed — lowering it buys two real joins and one visibly wrong story on the DEVELOPING panel. Re-run that measurement over a few hundred live items before touching it.</li>
+<li>Embeddings are optional. If the embedder won&#x27;t load, clustering falls back to normalized-title Jaccard ≥0.55 and <code>meta.embeddings</code> goes <code>off</code>, which the bottom bar surfaces. The pipeline never stops.</li>
+<li>Every network call has a timeout and a <code>try/except</code>. A dead feed, a Tiiny timeout, or a malformed article gets logged and skipped. Keep it that way — this runs a week with nobody watching.</li>
+</ul>
+</section>
+
+<h2 id=state>7. Current system state <span class="tag t-ok">Verified at publication</span></h2>
+<section id=state-body>
+<div class=grid>
+  <div class=stat><div class=n>1,105</div><div class=l>articles ingested &amp; analyzed</div></div>
+  <div class=stat><div class=n>0</div><div class=l>queue backlog</div></div>
+  <div class=stat><div class=n>0</div><div class=l>errors in 24 h</div></div>
+  <div class=stat><div class=n>62,621</div><div class=l>tokens generated on-device</div></div>
+  <div class=stat><div class=n>12</div><div class=l>developing-story clusters</div></div>
+  <div class=stat><div class=n>19</div><div class=l>AI images rendered</div></div>
+</div>
+<table>
+<tr><th>Component</th><th>State</th></tr>
+<tr><td><b>Tiiny Pocket</b></td><td>Volume unlocked; three models resident (Ornith-1.0-35B 50u, Qwen3-Embedding-0.6B 1u, Z-Image-Turbo 32u = 83/100 NPU units); ~24.6 tok/s generation</td></tr>
+<tr><td><b>Orange Pi 6 Plus</b> (CIX Phecda, Ubuntu 26.04)</td><td>CPU 2.7%, SoC 39&nbsp;°C, hosting pipeline + web + camera + tunnel</td></tr>
+<tr><td><b>Data path</b></td><td>USB point-to-point <code>172.17.7.176/30</code> — immune to DHCP and switch changes</td></tr>
+<tr><td><b>Archive growth</b></td><td>10.7&nbsp;MB database, 19 images (10.0&nbsp;MB), 3 intel digests filed to the device vault</td></tr>
+<tr><td><b>Recovery</b></td><td>Wake watchdog armed (3-minute interval): unlocks the volume, loads models, resumes the pipeline with no human present</td></tr>
+</table>
+<p class=machine>Feeds: 27 configured. The "sources alive" figure on the live board counts only sources that
+produced a new item in the last hour, so it is normally well below 27 — most wires do not publish every hour.</p>
+</section>
+
+<div class=foot>
+All measurements were taken on the hardware described, on the owner's own networks, on 2026-08-21. Device
+findings were reproduced before filing. The board and its source are public; the device credentials, API key
+and tunnel credentials are not, and appear nowhere in the repository or in this document.
+</div>
+</div></body></html>
