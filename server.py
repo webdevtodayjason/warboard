@@ -22,6 +22,7 @@ import http.client
 import json
 import os
 import platform
+import re
 import shutil
 import signal
 import socket
@@ -48,6 +49,8 @@ CAM_URL = (os.environ.get("CAM_URL") or "http://127.0.0.1:8812").rstrip("/")
 TIINY_BASE = "http://%s:8800" % (os.environ.get("TIINY_HOST") or "192.168.1.158")
 TIINY_KEY = os.environ.get("TIINY_KEY", "")
 IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "Tongyi-MAI/Z-Image-Turbo")
+PUBLIC_BASE = (os.environ.get("WARBOARD_PUBLIC_BASE") or "https://warboard.semfreak.dev").rstrip("/")
+SITE_DESC_FALLBACK = "Daily world-news brief, written and spoken on a Tiiny Pocket edge device."
 IMAGES_DIR = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "images")
 INDEX_PATH = os.path.join(BASE_DIR, "static", "index.html")
 
@@ -545,6 +548,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.r_cam_stream()
             if path == "/cam.jpg":
                 return self.r_cam_snapshot()
+            if path == "/feed.xml" or path == "/podcast.xml":
+                return self.r_feed()
+            if path.startswith("/episodes/"):
+                return self.r_episode(path)
             if path == "/og.png":
                 try:
                     with open(os.path.join(BASE_DIR, "static", "og.png"), "rb") as f:
@@ -709,6 +716,71 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             pass
         self.json(200, {"question": question, "results": out})
+
+    EPISODES_DIR = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "episodes")
+
+    def _episode_list(self):
+        """Newest-first episodes on disk, paired with their brief metadata."""
+        out = []
+        try:
+            names = sorted((n for n in os.listdir(self.EPISODES_DIR)
+                            if n.endswith(".mp3")), reverse=True)
+        except OSError:
+            return out
+        con = open_db()
+        try:
+            for n in names[:60]:
+                day = n[:-4]
+                full = os.path.join(self.EPISODES_DIR, n)
+                try:
+                    st = os.stat(full)
+                except OSError:
+                    continue
+                title = "WARBOARD Brief — %s" % day
+                desc = SITE_DESC_FALLBACK
+                try:
+                    row = con.execute(
+                        "SELECT title, body FROM docs WHERE kind='brief' AND subject=? LIMIT 1",
+                        (day,)).fetchone()
+                    if row:
+                        title = (rget(row, "title") or title)
+                        desc = (rget(row, "body") or desc)[:600]
+                except Exception:
+                    pass
+                # podcast clients show duration from the feed; probe it once
+                try:
+                    import audio as _a
+                    secs = _a._duration(full)
+                except Exception:
+                    secs = 0.0
+                out.append({"day": day, "title": title, "desc": desc,
+                            "bytes": st.st_size, "ts": st.st_mtime,
+                            "seconds": secs,
+                            "url": "%s/episodes/%s" % (PUBLIC_BASE, n)})
+        finally:
+            con.close()
+        return out
+
+    def r_feed(self):
+        try:
+            import audio
+            body = audio.build_feed(self._episode_list(), PUBLIC_BASE)
+        except Exception as exc:
+            log("[feed] %s" % str(exc)[:120])
+            return self.json(500, {"error": "feed unavailable"})
+        self.send_bytes(200, body.encode("utf-8"), "application/rss+xml; charset=utf-8")
+
+    def r_episode(self, path):
+        name = os.path.basename(path)
+        if not re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}\.mp3$", name):
+            return self.json(404, {"error": "not found"})
+        full = os.path.join(self.EPISODES_DIR, name)
+        try:
+            with open(full, "rb") as fh:
+                data = fh.read()
+        except OSError:
+            return self.json(404, {"error": "not found"})
+        self.send_bytes(200, data, "audio/mpeg")
 
     def r_log(self, q):
         limit = as_int(_first(q, "limit"), 50) or 50

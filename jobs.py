@@ -1092,8 +1092,64 @@ class Job:
 
 # Priority order. The first DUE job in this list runs; each run stamps its own
 # clock, so a cheap frequent job cannot starve behind an expensive rare one.
+
+# --------------------------------------------------------------------------- #
+# audio brief — narrate the day's text brief on the device itself
+# --------------------------------------------------------------------------- #
+
+AUDIO_INTERVAL_S = _env_float("WARBOARD_AUDIO_INTERVAL", 1800.0)
+
+
+def _episodes_dir(con):
+    base = db.default_images_dir(con)
+    root = os.path.dirname(base) if base else "."
+    return os.path.join(root, "episodes")
+
+
+def job_audio(con, ctx, force=False, day=None):
+    """Render the most recent text brief to a spoken mp3 episode.
+
+    Runs AFTER job_brief (which writes the text). Costs 7 NPU units for the
+    duration of the run only — audio.Speech starts the TTS model and stops it
+    again, so the three permanent models keep their 83 units.
+    """
+    try:
+        import audio
+    except Exception as exc:
+        return {"job": "audio", "did_work": False, "reason": "audio module: %s" % exc}
+
+    row = db.latest_doc(con, "brief")
+    if not row:
+        return {"job": "audio", "did_work": False, "reason": "no brief yet"}
+    day = day or (row["subject"] if hasattr(row, "keys") else None)
+    if not day:
+        return {"job": "audio", "did_work": False, "reason": "brief has no day"}
+
+    out_dir = _episodes_dir(con)
+    out = os.path.join(out_dir, "%s.mp3" % day)
+    if os.path.exists(out) and not force:
+        return {"job": "audio", "did_work": False, "day": day, "reason": "already rendered"}
+
+    body = row["body"] if hasattr(row, "keys") else ""
+    title = (row["title"] if hasattr(row, "keys") else "") or ("Brief for %s" % day)
+
+    with ctx.lease("NARRATING BRIEF %s — QWEN3-TTS" % day, seconds=900):
+        path, res = audio.render_episode(body, out, log=lambda m: ctx.log(m))
+    if not path:
+        db.add_event(con, "ERROR", "audio brief %s failed: %s" % (day, str(res)[:110]))
+        return {"job": "audio", "did_work": False, "day": day, "error": str(res)[:160]}
+
+    size = os.path.getsize(path)
+    _set(con, "audio_last_day", day)
+    db.add_event(con, "BRIEF", "narrated %s on-device — %.1f min, %d KB"
+                 % (day, (res or 0) / 60.0, size // 1024))
+    return {"job": "audio", "did_work": True, "day": day, "path": path,
+            "seconds": round(res or 0, 1), "bytes": size, "title": title}
+
+
 JOBS = (
     Job("brief", BRIEF_CHECK_S, job_brief, label="daily brief"),
+    Job("audio", AUDIO_INTERVAL_S, job_audio, label="audio narration"),
     Job("recluster", RECLUSTER_INTERVAL_S, job_recluster, label="cluster sweep"),
     Job("synthesis", SYNTHESIS_INTERVAL_S, job_synthesis, label="regional synthesis"),
     Job("dossier", DOSSIER_INTERVAL_S, job_dossier, label="entity dossier"),
