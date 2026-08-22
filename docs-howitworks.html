@@ -57,14 +57,15 @@ Source: <a href="https://github.com/webdevtodayjason/warboard">github.com/webdev
 Companion: <a href="https://artifacts.semfreak.dev/a/tiiny/warboard-postmortem/">Post-Mortem &amp; Runbook</a></div>
 </header>
 
-<p class=lede>Three AI models sharing one NPU. Twenty-seven news feeds. A public URL with no open ports.
+<p class=lede>Five AI models sharing one NPU. Twenty-seven news feeds. A public URL with no open ports.
 A database that fits in a phone photo. Every piece of this is deliberately, almost aggressively boring
 technology — and that is why it survived a night of hardware chaos and kept publishing.</p>
 
 <section class=toc>
 <a href="#map">1. The whole system on one page</a>
 <a href="#net">2. Networking: a cable and an outbound tunnel</a>
-<a href="#npu">3. Three models on one NPU</a>
+<a href="#matrix"><b>&rarr; Platform coverage: what this drives</b></a>
+<a href="#npu">3. Five models on one NPU</a>
 <a href="#enrich">4. The enrichment pipeline</a>
 <a href="#cluster">5. Clustering: the 0.80 threshold we measured</a>
 <a href="#image">6. Painting the news</a>
@@ -78,7 +79,7 @@ technology — and that is why it survived a night of hardware chaos and kept pu
 <h2 id=map><span class=n>1</span>The whole system on one page</h2>
 <section>
 <figure>
-<svg viewBox="0 0 860 430" role="img" aria-label="WARBOARD architecture diagram">
+<svg viewBox="0 0 880 520" role="img" aria-label="WARBOARD architecture diagram">
 <defs>
 <marker id="ah" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
   <path d="M0,0 L0,6 L8,3 z" fill="var(--wire)"/></marker>
@@ -96,79 +97,234 @@ technology — and that is why it survived a night of hardware chaos and kept pu
 .zt{font:600 10px ui-monospace,Menlo,monospace;fill:var(--mut);letter-spacing:.08em}
 </style>
 
-<!-- internet zone -->
-<rect class="zone" x="8" y="8" width="240" height="150"/>
+<rect class="zone" x="8" y="8" width="240" height="212"/>
 <text class="zt" x="18" y="26">PUBLIC INTERNET</text>
 <rect class="bx" x="24" y="38" width="200" height="42"/>
 <text class="lbl" x="36" y="58">27 OSINT feeds</text>
 <text class="sm" x="36" y="72">RSS · Atom · RDF</text>
-<rect class="bx" x="24" y="98" width="200" height="46"/>
-<text class="lbl" x="36" y="118">Cloudflare edge</text>
-<text class="sm" x="36" y="132">warboard.semfreak.dev</text>
+<rect class="bx" x="24" y="96" width="200" height="46"/>
+<text class="lbl" x="36" y="116">Cloudflare edge</text>
+<text class="sm" x="36" y="130">warboard.semfreak.dev</text>
+<rect class="bx" x="24" y="158" width="200" height="46"/>
+<text class="lbl" x="36" y="178">R2 + CDN</text>
+<text class="sm" x="36" y="192">cdn.warboard.semfreak.dev</text>
 
-<!-- rack zone -->
-<rect class="zone" x="272" y="8" width="304" height="414"/>
+<rect class="zone" x="272" y="8" width="304" height="500"/>
 <text class="zt" x="284" y="26">SERVER RACK</text>
 
-<rect class="bx" x="288" y="40" width="272" height="150"/>
+<rect class="bx" x="288" y="40" width="272" height="168"/>
 <text class="lbl" x="300" y="60">Orange Pi 6 Plus</text>
 <text class="sm" x="300" y="74">Ubuntu · 12 cores · Python stdlib only</text>
-<rect class="bx" x="300" y="84" width="118" height="30"/>
-<text class="sm" x="310" y="103">pipeline.py</text>
-<rect class="bx" x="430" y="84" width="118" height="30"/>
-<text class="sm" x="440" y="103">server.py :8811</text>
-<rect class="bx" x="300" y="120" width="118" height="30"/>
-<text class="sm" x="310" y="139">cloudflared</text>
-<rect class="bx" x="430" y="120" width="118" height="30"/>
-<text class="sm" x="440" y="139">ustreamer :8812</text>
-<rect class="bx" x="300" y="156" width="248" height="26"/>
-<text class="sm" x="310" y="173">SQLite (WAL) · items · clusters · metrics · oplog</text>
+<rect class="bx" x="300" y="84" width="118" height="28"/><text class="sm" x="310" y="102">pipeline.py</text>
+<rect class="bx" x="430" y="84" width="118" height="28"/><text class="sm" x="440" y="102">server.py :8811</text>
+<rect class="bx" x="300" y="118" width="118" height="28"/><text class="sm" x="310" y="136">cloudflared</text>
+<rect class="bx" x="430" y="118" width="118" height="28"/><text class="sm" x="440" y="136">ustreamer :8812</text>
+<rect class="bx" x="300" y="152" width="248" height="26"/>
+<text class="sm" x="310" y="169">SQLite (WAL) · items · clusters · docs · oplog</text>
+<rect class="bx" x="300" y="182" width="248" height="20"/>
+<text class="sm" x="310" y="196">episodes/ · images/ · digests/  →  R2</text>
 
-<!-- tiiny -->
-<rect class="bxa" x="288" y="238" width="272" height="168"/>
-<text class="lbl" x="300" y="258">Tiiny Pocket <tspan class="sm">— all AI, no cloud</tspan></text>
-<text class="sm" x="300" y="274">NPU 100 units · 49 GB device memory</text>
-<rect class="bx" x="300" y="284" width="248" height="30"/>
-<text class="sm" x="310" y="303">Ornith-1.0-35B — analysis · 50u</text>
-<rect class="bx" x="300" y="320" width="248" height="30"/>
-<text class="sm" x="310" y="339">Qwen3-Embedding-0.6B — vectors · 1u</text>
-<rect class="bx" x="300" y="356" width="248" height="30"/>
-<text class="sm" x="310" y="375">Z-Image-Turbo — imagery · 32u</text>
+<rect class="bxa" x="288" y="248" width="272" height="248"/>
+<text class="lbl" x="300" y="268">Tiiny Pocket <tspan class="sm">— all AI, no cloud</tspan></text>
+<text class="sm" x="300" y="284">NPU 100 units · 49 GB device memory</text>
+<rect class="bx" x="300" y="294" width="248" height="28"/><text class="sm" x="310" y="312">Ornith-1.0-35B — analysis · 50u</text>
+<rect class="bx" x="300" y="328" width="248" height="28"/><text class="sm" x="310" y="346">Z-Image-Turbo — imagery · 32u</text>
+<rect class="bx" x="300" y="362" width="248" height="28"/><text class="sm" x="310" y="380">Qwen3-TTS — the voice · 7u ·  on demand</text>
+<rect class="bx" x="300" y="396" width="248" height="28"/><text class="sm" x="310" y="414">Qwen3-Reranker — precision · 2u</text>
+<rect class="bx" x="300" y="430" width="248" height="28"/><text class="sm" x="310" y="448">Qwen3-Embedding — vectors · 1u</text>
+<rect class="bx" x="300" y="464" width="248" height="22"/><text class="sm" x="310" y="479">Knowledge Base — the vault</text>
 
-<!-- camera -->
-<rect class="bx" x="600" y="40" width="200" height="46"/>
+<rect class="bx" x="600" y="40" width="216" height="46"/>
 <text class="lbl" x="612" y="60">IR rack camera</text>
 <text class="sm" x="612" y="74">/dev/video4 · MJPEG</text>
 
-<!-- viewer -->
-<rect class="bx" x="600" y="120" width="200" height="46"/>
-<text class="lbl" x="612" y="140">Viewers</text>
-<text class="sm" x="612" y="154">browser · no login</text>
+<rect class="bx" x="600" y="102" width="216" height="60"/>
+<text class="lbl" x="612" y="122">Viewers</text>
+<text class="sm" x="612" y="136">browser · no login</text>
+<text class="sm" x="612" y="152">podcast apps · /feed.xml</text>
 
-<!-- ops -->
-<rect class="bx" x="600" y="238" width="200" height="66"/>
-<text class="lbl" x="612" y="258">Self-healing</text>
-<text class="sm" x="612" y="273">wake watchdog · 3 min</text>
-<text class="sm" x="612" y="288">unlock → load → resume</text>
+<rect class="bx" x="600" y="248" width="216" height="66"/>
+<text class="lbl" x="612" y="268">Self-healing</text>
+<text class="sm" x="612" y="283">wake watchdog · 3 min</text>
+<text class="sm" x="612" y="298">unlock → load → resume</text>
 
-<!-- wires -->
-<path class="ln" d="M124,80 L124,96"/>
-<path class="ln" d="M224,60 C260,60 268,80 286,96"/>
+<rect class="bx" x="600" y="330" width="216" height="76"/>
+<text class="lbl" x="612" y="350">Daily output</text>
+<text class="sm" x="612" y="365">brief · dossiers · syntheses</text>
+<text class="sm" x="612" y="380">illustrations · podcast episode</text>
+<text class="sm" x="612" y="395">all written on the device</text>
+
+<path class="ln" d="M124,80 L124,94"/>
+<path class="ln" d="M224,60 C258,60 268,80 286,94"/>
 <text class="sm" x="228" y="52">fetch</text>
-<path class="ln" d="M124,144 C124,180 200,200 286,200"/>
-<path class="lna" d="M300,150 C240,168 150,150 128,146" />
-<text class="sm" x="150" y="176">outbound tunnel only</text>
-<path class="ln" d="M600,143 C580,143 240,143 226,124"/>
-<path class="lna" d="M424,190 L424,236"/>
-<text class="sm" x="430" y="216">USB /30 · 172.17.7.176</text>
-<path class="ln" d="M600,63 C580,63 566,100 552,132"/>
-<path class="ln" d="M600,268 C580,268 570,268 562,268"/>
+<path class="lna" d="M300,140 C250,150 180,146 128,142"/>
+<text class="sm" x="150" y="168">outbound tunnel only</text>
+<path class="lna" d="M300,192 C250,196 180,188 128,182"/>
+<path class="ln" d="M600,128 C580,128 246,128 226,120"/>
+<path class="lna" d="M424,208 L424,246"/>
+<text class="sm" x="430" y="232">USB /30 · 172.17.7.176</text>
+<path class="ln" d="M600,63 C580,63 566,100 552,128"/>
+<path class="ln" d="M600,278 C584,278 570,290 562,300"/>
+<path class="ln" d="M562,380 C574,380 588,368 598,360"/>
 </svg>
-<figcaption>Two machines, one cable between them, and exactly zero inbound ports open anywhere.</figcaption>
+<figcaption>Two machines, one cable between them, five AI models on the small one, and exactly zero inbound ports open anywhere.</figcaption>
 </figure>
 <p>The split is deliberate: <b>the Orange Pi does everything that is not thinking</b> — fetching, parsing,
 storing, serving, streaming, publishing — and <b>the Tiiny does nothing but think</b>. No inference call
 leaves the rack. The two talk over a cable.</p>
+</section>
+
+
+<style>
+.cap{--u:#c2410c;--on:#166534;--off:#9ca3af}
+@media(prefers-color-scheme:dark){.cap{--u:#fb923c;--on:#4ade80;--off:#6b7280}}
+.cap-hero{display:flex;flex-wrap:wrap;align-items:center;gap:0;margin:22px 0 6px;
+  border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--card)}
+.cap-hero .seg{flex:1 1 190px;padding:20px 22px;border-right:1px solid var(--line)}
+.cap-hero .seg:last-child{border-right:none}
+.cap-hero .big{font-size:34px;font-weight:750;letter-spacing:-.03em;line-height:1;color:var(--acc);
+  font-variant-numeric:tabular-nums}
+.cap-hero .big small{font-size:16px;font-weight:600;color:var(--mut);letter-spacing:0}
+.cap-hero .lab{font-size:11.5px;text-transform:uppercase;letter-spacing:.09em;color:var(--mut);margin-top:7px}
+.cov{display:flex;gap:5px;margin-top:11px}
+.cov i{flex:1;height:7px;border-radius:4px;background:var(--line)}
+.cov i.on{background:var(--acc)}
+.mgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(258px,1fr));gap:12px;margin:18px 0}
+.mcard{border:1px solid var(--line);border-radius:12px;padding:15px 16px;background:var(--card);
+  position:relative;overflow:hidden}
+.mcard.live{border-color:color-mix(in srgb,var(--acc) 42%,transparent)}
+.mcard.live::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--acc)}
+.mcard .top{display:flex;align-items:baseline;gap:8px;margin-bottom:3px}
+.mcard .cls{font-size:10.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--mut)}
+.mcard .st{margin-left:auto;font-size:9.5px;font-weight:700;letter-spacing:.07em;
+  text-transform:uppercase;color:var(--off)}
+.mcard.live .st{color:var(--on)}
+.mcard .nm{font-size:15px;font-weight:650;letter-spacing:-.01em;margin:4px 0 9px}
+.mcard .nm a{color:inherit;text-decoration:none;border-bottom:1px dotted var(--line)}
+.mcard .nm a:hover{color:var(--acc);border-bottom-color:var(--acc)}
+.mcard .role{font-size:13px;line-height:1.55;color:var(--mut)}
+.npubar{display:flex;align-items:center;gap:8px;margin:10px 0 9px}
+.npubar .track{flex:1;height:6px;border-radius:4px;background:var(--line);overflow:hidden}
+.npubar .fill{display:block;height:100%;background:var(--acc);border-radius:4px}
+.mcard:not(.live) .npubar .fill{background:var(--off);opacity:.55}
+.npubar .u{font-size:11px;font-variant-numeric:tabular-nums;color:var(--mut);min-width:34px;text-align:right}
+.eps{border:1px solid var(--line);border-radius:12px;overflow:hidden;margin:16px 0}
+.ep{display:flex;gap:12px;align-items:flex-start;padding:11px 15px;border-bottom:1px solid var(--line)}
+.ep:last-child{border-bottom:none}
+.ep:nth-child(odd){background:color-mix(in srgb,var(--line) 22%,transparent)}
+.ep .m{flex:0 0 44px;font-size:9.5px;font-weight:750;letter-spacing:.06em;padding:3px 0;text-align:center;
+  border-radius:4px;background:color-mix(in srgb,var(--acc) 15%,transparent);color:var(--acc)}
+.ep .m.get{background:color-mix(in srgb,var(--info) 15%,transparent);color:var(--info)}
+.ep .p{flex:0 0 auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:var(--ink)}
+.ep .d{flex:1 1 240px;font-size:12.5px;color:var(--mut);line-height:1.5}
+.unused{display:flex;flex-wrap:wrap;gap:7px;margin:12px 0 4px}
+.unused span{font-size:11.5px;font-family:ui-monospace,Menlo,monospace;color:var(--mut);
+  border:1px dashed var(--line);border-radius:20px;padding:3px 11px}
+.headroom{border-left:3px solid var(--acc);background:var(--accbg);padding:13px 16px;border-radius:0 10px 10px 0;margin:16px 0}
+.headroom b{color:var(--acc)}
+@media(max-width:560px){.ep{flex-wrap:wrap}.ep .d{flex-basis:100%}}
+</style>
+
+<h2 id=matrix>Platform coverage <span class="tag t-ok">Measured 2026-08-22 02:48</span></h2>
+<section class="cap">
+<p class=lede>WARBOARD is a reference implementation of the Tiiny platform. It speaks to the device over its
+documented HTTP API with no client library and no third-party packages &mdash; Python's standard library and
+nothing else &mdash; and it drives five of the nine model classes the hardware ships with, concurrently, on
+one pocket-sized NPU.</p>
+
+<div class="cap-hero">
+  <div class="seg">
+    <div class="big">5<small> / 9</small></div>
+    <div class="lab">model classes in use</div>
+    <div class="cov"><i class=on></i><i class=on></i><i class=on></i><i class=on></i><i class=on></i><i></i><i></i><i></i><i></i></div>
+  </div>
+  <div class="seg">
+    <div class="big">13</div>
+    <div class="lab">device endpoints exercised</div>
+  </div>
+  <div class="seg">
+    <div class="big">83<small> / 100</small></div>
+    <div class="lab">NPU units held continuously</div>
+  </div>
+  <div class="seg">
+    <div class="big">0</div>
+    <div class="lab">third-party dependencies</div>
+  </div>
+</div>
+
+<h3>The models, and what each one is actually for</h3>
+<div class="mgrid"><div class="mcard live">
+  <div class="top"><span class="cls">Text generation</span><span class="st">In use</span></div>
+  <div class="nm"><a href="https://huggingface.co/deepreinforce-ai/Ornith-1.0-35B" target="_blank" rel="noopener noreferrer">Ornith-1.0-35B</a></div>
+  <div class="npubar"><span class="track"><span class="fill" style="width:100%"></span></span><span class="u">50u</span></div>
+  <div class="role">Reads every article and writes the analysis: summary, category, combatant-command region and a severity from one to five. Also writes cluster headlines, hourly situation reports, entity dossiers, regional syntheses and the podcast script.</div>
+</div><div class="mcard live">
+  <div class="top"><span class="cls">Text-to-image</span><span class="st">In use</span></div>
+  <div class="nm"><a href="https://huggingface.co/Tongyi-MAI/Z-Image-Turbo" target="_blank" rel="noopener noreferrer">Z-Image-Turbo</a></div>
+  <div class="npubar"><span class="track"><span class="fill" style="width:64%"></span></span><span class="u">32u</span></div>
+  <div class="role">Paints a photorealistic editorial illustration for any story, in about eight seconds, seeded by article id so the picture is reproducible.</div>
+</div><div class="mcard live">
+  <div class="top"><span class="cls">Text-to-speech</span><span class="st">In use</span></div>
+  <div class="nm"><a href="https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice" target="_blank" rel="noopener noreferrer">Qwen3-TTS CustomVoice</a></div>
+  <div class="npubar"><span class="track"><span class="fill" style="width:14%"></span></span><span class="u">7u</span></div>
+  <div class="role">Narrates the daily brief. This is Tiiny, the device's own voice, and the reason the board has a podcast. Loaded for a run and released.</div>
+</div><div class="mcard live">
+  <div class="top"><span class="cls">Text reranking</span><span class="st">In use</span></div>
+  <div class="nm"><a href="https://huggingface.co/Qwen/Qwen3-Reranker-0.6B" target="_blank" rel="noopener noreferrer">Qwen3-Reranker-0.6B</a></div>
+  <div class="npubar"><span class="track"><span class="fill" style="width:4%"></span></span><span class="u">2u</span></div>
+  <div class="role">Cross-encoder precision pass over vault retrieval, so Ask the Archive returns the passage that answers the question rather than the one that merely resembles it.</div>
+</div><div class="mcard live">
+  <div class="top"><span class="cls">Text embedding</span><span class="st">In use</span></div>
+  <div class="nm"><a href="https://huggingface.co/Qwen/Qwen3-Embedding-0.6B" target="_blank" rel="noopener noreferrer">Qwen3-Embedding-0.6B</a></div>
+  <div class="npubar"><span class="track"><span class="fill" style="width:2%"></span></span><span class="u">1u</span></div>
+  <div class="role">Turns every article into a 1,024-dimension vector. Clusters cross-source coverage into developing stories and powers semantic search over the archive.</div>
+</div><div class="mcard ">
+  <div class="top"><span class="cls">Vision (image-text-to-text)</span><span class="st">Available</span></div>
+  <div class="nm">Ornith &mdash; already resident</div>
+  <div class="npubar"><span class="track"><span class="fill" style="width:0%"></span></span><span class="u">0u</span></div>
+  <div class="role">The device reports supports_vision through /v1/capabilities and Ornith is already loaded, so image understanding costs no additional NPU. Not yet wired in.</div>
+</div><div class="mcard ">
+  <div class="top"><span class="cls">Music generation</span><span class="st">Available</span></div>
+  <div class="nm"><a href="https://huggingface.co/RoyalCities/Foundation-1" target="_blank" rel="noopener noreferrer">Foundation-1</a></div>
+  <div class="npubar"><span class="track"><span class="fill" style="width:10%"></span></span><span class="u">5u</span></div>
+  <div class="role">On-device scoring. The obvious next move is a theme for the podcast, composed by the same box that writes and reads it.</div>
+</div><div class="mcard ">
+  <div class="top"><span class="cls">Speech recognition</span><span class="st">Available</span></div>
+  <div class="nm"><a href="https://huggingface.co/Qwen/Qwen3-ASR-1.7B" target="_blank" rel="noopener noreferrer">Qwen3-ASR-1.7B</a></div>
+  <div class="npubar"><span class="track"><span class="fill" style="width:14%"></span></span><span class="u">7u</span></div>
+  <div class="role">Would close the loop: speak a question, the device transcribes, retrieves, answers and replies in Tiiny's voice, with nothing leaving the rack.</div>
+</div><div class="mcard ">
+  <div class="top"><span class="cls">Image-to-text (OCR)</span><span class="st">Available</span></div>
+  <div class="nm"><a href="https://huggingface.co/zai-org/GLM-OCR" target="_blank" rel="noopener noreferrer">GLM-OCR</a></div>
+  <div class="npubar"><span class="track"><span class="fill" style="width:8%"></span></span><span class="u">4u</span></div>
+  <div class="role">Reading text out of images carried by news feeds.</div>
+</div></div>
+
+<div class="headroom">
+<b>Four models, one accelerator, no collisions.</b> Ornith, Z-Image, the embedder and the reranker hold
+83 of 100 units permanently. Speech loads for a narration run and releases, briefly reaching
+90. The device serves one inference at a time, so the application is the queue: a lease in the
+database serialises every caller, live traffic always preempts background work, and a viewer's click wins
+over everything. NPU peaked at 96.87% under load while generation held
+25.88 tokens per second.
+</div>
+
+<h3>Endpoints in production use</h3>
+<div class="eps"><div class="ep"><span class="m ">POST</span><span class="p">/v1/chat/completions</span><span class="d">Every analysis, headline, situation report, dossier and podcast script the board produces</span></div><div class="ep"><span class="m ">POST</span><span class="p">/v1/embeddings</span><span class="d">Story clustering and semantic archive search</span></div><div class="ep"><span class="m ">POST</span><span class="p">/v1/image/generate</span><span class="d">Article illustration, native route for direct control of size, seed and steps</span></div><div class="ep"><span class="m ">POST</span><span class="p">/v1/audio/speech</span><span class="d">Podcast narration</span></div><div class="ep"><span class="m ">POST</span><span class="p">/v1/rerank</span><span class="d">Precision pass over vault results</span></div><div class="ep"><span class="m ">POST</span><span class="p">/kb/upload &rarr; /kb/finalize</span><span class="d">Filing daily intelligence digests into the device Knowledge Base</span></div><div class="ep"><span class="m ">POST</span><span class="p">/kb/retrieve</span><span class="d">Public semantic search across the on-device vault</span></div><div class="ep"><span class="m ">POST</span><span class="p">/api/v1/account/auth</span><span class="d">Unattended unlock of the encrypted volume after a power event (authd, loopback only)</span></div><div class="ep"><span class="m get">GET</span><span class="p">/v1/capabilities</span><span class="d">Feature detection; this is how we confirmed the chat model can see images</span></div><div class="ep"><span class="m get">GET</span><span class="p">/api/v1/npu/status</span><span class="d">Live NPU load, memory and occupancy shown on the board</span></div><div class="ep"><span class="m get">GET</span><span class="p">/api/v1/models/npu/status</span><span class="d">Resident model roster and the hundred-unit budget</span></div><div class="ep"><span class="m ">POST</span><span class="p">/api/v1/models/{id}/start · /stop</span><span class="d">Loading speech on demand, releasing it after, and automatic model recovery</span></div><div class="ep"><span class="m get">GET</span><span class="p">/api/v1/models/ · /online_models</span><span class="d">Catalogue inspection and NPU cost planning</span></div></div>
+<p class=machine>Not yet exercised, and each one is a working feature waiting for a use:</p>
+<div class="unused"><span>/v1/audio/transcriptions</span><span>/v1/asr/recognize</span><span>/v1/music/generate</span><span>/v1/3d/</span><span>connectors service</span><span>Agent Store</span></div>
+
+<h3>What the platform produced</h3>
+<div class=grid>
+  <div class=stat><div class=n>1,335</div><div class=l>articles analysed on-device</div></div>
+  <div class=stat><div class=n>75,311</div><div class=l>tokens generated</div></div>
+  <div class=stat><div class=n>41</div><div class=l>illustrations rendered</div></div>
+  <div class=stat><div class=n>9</div><div class=l>briefs, dossiers, syntheses</div></div>
+  <div class=stat><div class=n>1</div><div class=l>podcast episode</div></div>
+  <div class=stat><div class=n>31</div><div class=l>objects backed up offsite</div></div>
+  <div class=stat><div class=n>27</div><div class=l>live OSINT feeds</div></div>
+  <div class=stat><div class=n>0</div><div class=l>errors in 24 hours</div></div>
+</div>
 </section>
 
 <h2 id=net><span class=n>2</span>Networking: a cable and an outbound tunnel</h2>
@@ -202,17 +358,21 @@ from anywhere without exposing SSH. Three different network paths existed at var
 public board never went down.</p>
 </section>
 
-<h2 id=npu><span class=n>3</span>Three models on one NPU</h2>
+<h2 id=npu><span class=n>3</span>Five models on one NPU</h2>
 <section>
-<p>The device allocates NPU capacity in units out of 100. WARBOARD keeps three models resident
-simultaneously:</p>
+<p>The device allocates NPU capacity in units out of 100. WARBOARD keeps four models resident permanently
+and borrows a fifth when it needs a voice:</p>
 <table>
 <tr><th>Model</th><th>Units</th><th>Job</th><th>Speed</th></tr>
 <tr><td>Ornith-1.0-35B</td><td>50</td><td>Reads each article; writes summary, category, region, severity</td><td>~24–26 tok/s</td></tr>
-<tr><td>Qwen3-Embedding-0.6B</td><td>1</td><td>1,024-dim vectors for clustering and archive search</td><td>milliseconds</td></tr>
 <tr><td>Z-Image-Turbo</td><td>32</td><td>Photorealistic article imagery, 8 diffusion steps</td><td>~8 s / image</td></tr>
+<tr><td>Qwen3-Reranker-0.6B</td><td>2</td><td>Cross-encoder precision pass over archive retrieval</td><td>sub-second</td></tr>
+<tr><td>Qwen3-Embedding-0.6B</td><td>1</td><td>1,024-dim vectors for clustering and archive search</td><td>milliseconds</td></tr>
+<tr><td>Qwen3-TTS CustomVoice</td><td>7*</td><td>Narrates the daily brief — this is Tiiny's voice</td><td>~15 s load, then real time</td></tr>
 </table>
-<p>That is 83 units in use with 17 spare. Loading all three is trivial; <b>using them concurrently is not.</b></p>
+<p>That is <b>85 units held continuously with 15 spare</b>, briefly reaching 92 while a brief is being
+narrated. *Speech is not resident: it is started for a narration run and released after, which is how a
+fifth model fits at all. Loading them is trivial; <b>using them concurrently is not.</b></p>
 <div class=box>
 <div class=h>The concurrency problem, and the lease that solves it</div>
 <p>An image request issued while the chat model is mid-inference fails with device error
@@ -238,7 +398,7 @@ enrich   serial queue → Ornith → validate → embed → cluster → metrics
 device   NPU/CPU/memory telemetry every 5 s
 vault    daily intel digest filed into the device Knowledge Base
 sitrep   hourly situation report + idle-time image pre-rendering
-janitor  prune hourly (items forever, metrics 8 d → hourly rollup, images 20 GB cap, oplog 48 h)</code></pre>
+janitor  prune hourly (items 21 d, metrics 8 d, oplog 48 h)</code></pre>
 
 <h3>Getting structured data out of a reasoning model</h3>
 <p>Ornith puts its chain of thought in <code>message.reasoning_content</code>, and that content
@@ -302,9 +462,7 @@ NPU idle. Only the native graph appears to have shipped. The board crops the squ
 <li><b>Prompting matters.</b> The first version said "editorial news illustration for this headline," and the
 model dutifully painted newspaper signage covered in garbled pseudo-text. Describing the <em>scene</em>
 instead, with writing surfaces in the negative prompt, fixed it.</li>
-<li><b>Cached</b> on disk, keyed by id, so a popular story costs one generation. The directory is
-capped (20 GB by default): orphans go first, then the oldest low-severity images. An S4/S5
-story's image is never deleted.</li>
+<li><b>Cached forever</b> on disk, keyed by id, so a popular story costs one generation.</li>
 </ul>
 </section>
 
