@@ -160,7 +160,7 @@ came up, worked for ten minutes, then <em>re-locked itself mid-operation</em> wi
 
 <div class="ev good"><div class=t>19:49</div><div class=h>Root cause found and automated away</div>
 <div class=d>The volume is opened by an authd call the desktop app makes on connect. Headless, nobody makes
-it. The endpoint documented publicly does not exist on shipping firmware; the real one is loopback-only. A
+it. The publicly documented endpoint 404s on shipping firmware; the device itself replies &ldquo;migrated to authd&rdquo; on the neighbouring path, and the real one is loopback-only. A
 watchdog on the rack host now performs the unlock itself every three minutes. The appliance can finally
 survive a power cut unattended.</div></div>
 </div>
@@ -179,8 +179,10 @@ what makes it confusing — the device looks healthy and answers SSH while being
 <p>Two details turn an inconvenience into a deployment blocker:</p>
 <ul>
 <li><b>The documented endpoint does not exist on shipping firmware.</b> The public SDK documentation shows
-<code>POST /api/v1/auth/login</code> on port 80. On our unit that path returns <b>502 Bad Gateway</b> — nginx
-is up but nothing is behind it while locked.</li>
+<code>POST /api/v1/auth/login</code> on port 80. On our unit that path returns <b>404 Not Found</b>. The
+neighbouring <code>/api/v1/account/auth</code> on port 80 returns <b>410 Gone</b> with a message that names
+the real answer: <code>"Account APIs have migrated to authd. Use authd account and token flows."</code> —
+so the device knows the documentation is stale even though the docs site does not.</li>
 <li><b>The real endpoint is loopback-only.</b> authd listens on <code>127.0.0.1:6666</code> and nowhere else,
 so <em>no remote host can unlock the device</em>. The call has to originate on the device itself.</li>
 </ul>
@@ -276,12 +278,12 @@ now log once on failure and once on recovery instead of every cycle.</p>
 <p>---</p>
 <h3>A. What you need</h3>
 <p><b>Hardware</b></p>
-<table><tr><th>Item</th><th>What it is</th><th>Notes</th></tr><tr><td>Orange Pi 6 Plus (CIX SKY1, aarch64)</td><td>the host</td><td>live: Ubuntu 26.04 LTS, Python 3.14.4, 72 GB class box. Any arm64 systemd host with Python ≥3.11 works.</td></tr><tr><td>Tiiny AI Pocket Lab (80 GB, 190 TOPS)</td><td>the NPU</td><td>Debian 12 inside, everything in Docker. Serial-bound license.</td></tr><tr><td>USB-C data cable Pi ↔ Tiiny</td><td><b>the actual transport</b></td><td>The Tiiny presents a CDC-NCM interface. On the Pi it is <code>enx02ce2881f302</code> = <code>172.17.7.178/30</code>, device = <code>172.17.7.177</code>. <b>[DIVERGENCE]</b> README/CONTRACT/<code>install.sh</code> all default <code>TIINY_HOST=192.168.1.158</code> (LAN). The live deployment uses the USB address. LAN works too; USB is faster and survives DHCP drift.</td></tr><tr><td>InnoMaker U20CAM-1080PD USB camera</td><td>rack cam</td><td>UVC, MJPEG 1280x720.</td></tr><tr><td>Wired LAN to the Pi</td><td>uplink</td><td>live: <code>enp97s0</code> = <code>192.168.0.116/24</code>, plus Tailscale <code>100.98.116.125</code>.</td></tr></table>
+<table><tr><th>Item</th><th>What it is</th><th>Notes</th></tr><tr><td>Orange Pi 6 Plus (CIX SKY1, aarch64)</td><td>the host</td><td>live: Ubuntu 26.04 LTS, Python 3.14.4, 16 GB board (15,162 MB RAM). Any arm64 systemd host with Python ≥3.11 works.</td></tr><tr><td>Tiiny AI Pocket Lab (80 GB, 190 TOPS)</td><td>the NPU</td><td>Debian 12 inside, everything in Docker. Serial-bound license.</td></tr><tr><td>USB-C data cable Pi ↔ Tiiny</td><td><b>the actual transport</b></td><td>The Tiiny presents a CDC-NCM interface. On the Pi it is <code>enx02ce2881f302</code> = <code>172.17.7.178/30</code>, device = <code>172.17.7.177</code>. <b>[DIVERGENCE]</b> README/CONTRACT/<code>install.sh</code> all default <code>TIINY_HOST=192.168.1.158</code> (LAN). The live deployment uses the USB address. LAN works too; USB is faster and survives DHCP drift.</td></tr><tr><td>InnoMaker U20CAM-1080PD USB camera</td><td>rack cam</td><td>UVC, MJPEG 1280x720.</td></tr><tr><td>Wired LAN to the Pi</td><td>uplink</td><td>live: <code>enp97s0</code> = <code>192.168.0.116/24</code>, plus Tailscale <code>100.98.116.125</code>.</td></tr></table>
 <p><b>Accounts</b></p>
 <ul>
 <li>Cloudflare account with the zone (here <code>semfreak.dev</code>) — for the named tunnel + DNS.</li>
 <li>Tiiny device: master password + the account username (stored as <code>TIINY_USER</code>/<code>TIINY_PASS</code>), and the static UUID API key.</li>
-<li>No other API keys. All 30 feeds are free and keyless. <code>GNEWS_API_KEY</code> is optional and is <b>not</b> set in the live deployment.</li>
+<li>No other API keys. All 27 feeds are free and keyless. <code>GNEWS_API_KEY</code> is optional and is <b>not</b> set in the live deployment.</li>
 </ul>
 <p><b>Network assumptions</b></p>
 <ul>
@@ -302,7 +304,7 @@ now log once on failure and once on recovery instead of every cycle.</p>
 <ul>
 <li>The TiinyOS desktop app performs the unlock automatically when it connects. <b>Headless there is nobody to do that</b>, so after every power event the gateway stays dark forever.</li>
 <li>The unlock is <code>POST /api/v1/account/auth</code> with body <code>{&quot;password&quot;: &quot;&lt;master password&gt;&quot;}</code> against <b>authd</b>.</li>
-<li><b>authd listens on <code>127.0.0.1:6666</code> ONLY.</b> Verified from the Pi: port 6666 is closed from off-device; nginx on <code>:80</code> 502s that path. Therefore <b>the unlock call must be executed ON the device over SSH.</b> This is the single non-obvious fact in the whole build.</li>
+<li><b>authd listens on <code>127.0.0.1:6666</code> ONLY.</b> Verified from the Pi: port 6666 is closed from off-device; nginx on <code>:80</code> answers that path with 410 Gone (&ldquo;migrated to authd&rdquo;). Therefore <b>the unlock call must be executed ON the device over SSH.</b> This is the single non-obvious fact in the whole build.</li>
 <li>Success returns a JSON body containing <code>attestation</code>; <code>/dev/mapper/userdata_crypt</code> appears and compose brings the stack up over the next ~30–300 s.</li>
 </ul>
 <h3 style='font-size:15px'>B3. SSH into the device (needed for §F) <b>[FIRMWARE]</b></h3>
@@ -329,7 +331,7 @@ bash /opt/warboard/load-models.sh
 
 # all three, with proof-of-life on chat + embeddings + image
 TIINY_KEY=&lt;key&gt; bash /opt/warboard/deploy/wake-tiiny.sh 172.17.7.177</code></pre>
-<p><code>load-models.sh</code> percent-encodes the model id (<code>Qwen%2FQwen3-Embedding-0.6B</code>) — <b>the device 404s on a literal slash in the path.</b> Download budget in the script is 2400 s for ~1.2 GB; start budget 300 s. Model loads take 30–90 s each.</p>
+<p><code>load-models.sh</code> percent-encodes the model id (<code>Qwen%2FQwen3-Embedding-0.6B</code>) — <b>percent-encoding is optional on current firmware &mdash; a literal slash also returns 200.</b> Download budget in the script is 2400 s for ~1.2 GB; start budget 300 s. Model loads take 30–90 s each.</p>
 <p><b>Device behaviour that shapes the whole design:</b></p>
 <ul>
 <li><b>No batching.</b> One inference at a time, ~24 tok/s. Enrichment is a strictly serial queue; parallelising makes it slower.</li>
@@ -445,7 +447,7 @@ no-autoupdate: true                   # an autoupdate restart mid-week is an unw
 <h3>F. Make it survive power loss</h3>
 <p>The failure mode: mains blips → Tiiny reboots → encrypted volume closed → <code>:8800</code> dark → <code>warboard-pipeline</code> backs off forever. Nothing recovers on its own, because the unlock is normally done by a desktop app that isn&#x27;t there.</p>
 <p><b>Three pieces, none of which <code>install.sh</code> handles. [DIVERGENCE] — all installed by hand on the live box.</b></p>
-<p><b>1. The device SSH key on the host</b> — <code>/etc/warboard-tiiny.key</code>, <code>0600 root:root</code>, ed25519 (§B3). Required because <b>the unlock call has to originate on the device</b>: authd binds <code>127.0.0.1:6666</code> only, and nginx on <code>:80</code> 502s that path. There is no remote way to do it.</p>
+<p><b>1. The device SSH key on the host</b> — <code>/etc/warboard-tiiny.key</code>, <code>0600 root:root</code>, ed25519 (§B3). Required because <b>the unlock call has to originate on the device</b>: authd binds <code>127.0.0.1:6666</code> only, and nginx on <code>:80</code> answers that path with 410 Gone (&ldquo;migrated to authd&rdquo;). There is no remote way to do it.</p>
 <p><b>2. The watchdog script</b> — <code>/opt/warboard/deploy/wake-check.sh</code> (0755 root). Every tick it:</p>
 <pre><code>GET  http://$TIINY_HOST:8800/api/v1/models/npu/status   (5 s)
   != 200 and TIINY_PASS set
@@ -571,7 +573,7 @@ ssh sem@100.98.116.125 &#x27;sudo bash /opt/warboard-src/deploy/install.sh&#x27;
 produced a new item in the last hour, so it is normally well below 27 — most wires do not publish every hour.</p>
 </section>
 
-<div class=foot>
+<div class=foot><b>Accuracy note:</b> after first publication an automated pass re-verified every claim against the live machines and produced seven corrections, all applied here — most importantly the exact HTTP responses for the auth endpoints (404 / 410 Gone, not 502), the host RAM figure, and the feed count. The numbers in this document are observations, and where a first draft disagreed with the hardware, the hardware won.<br><br>
 All measurements were taken on the hardware described, on the owner's own networks, on 2026-08-21. Device
 findings were reproduced before filing. The board and its source are public; the device credentials, API key
 and tunnel credentials are not, and appear nowhere in the repository or in this document.

@@ -9,7 +9,8 @@
 # shipping firmware — it is absent from every service's own OpenAPI spec. The
 # real route is /api/v1/account/auth on authd; see the note below.)
 #
-# Needs in /etc/warboard.env (0600): TIINY_HOST TIINY_KEY TIINY_USER TIINY_PASS
+# Needs in /etc/warboard.env (0600): TIINY_HOST TIINY_KEY TIINY_PASS
+# (TIINY_USER is recorded for humans; the unlock payload uses the password only)
 set -u
 source /etc/warboard.env
 H="${TIINY_HOST:-}"; [ -n "$H" ] || exit 0
