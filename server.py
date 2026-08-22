@@ -258,6 +258,45 @@ def generate_image(item_id, title, summary):
         return None, "unexpected response (%s, %d bytes)" % (ctype, len(raw))
 
 
+RERANK_MODEL = os.environ.get("RERANK_MODEL", "Qwen/Qwen3-Reranker-0.6B")
+
+
+def rerank_passages(question, results, keep=12):
+    """Reorder vault passages by cross-encoder relevance. Best-effort: any
+    failure (model not loaded, timeout) returns the input order untouched."""
+    import urllib.request
+    docs = []
+    for r in results[:keep]:
+        t = str(r.get("lossless_restatement") or "")[:1200]
+        if t:
+            docs.append((r, t))
+    if len(docs) < 2:
+        return results
+    body = json.dumps({"model": RERANK_MODEL, "query": question,
+                       "documents": [d for _, d in docs]}).encode()
+    req = urllib.request.Request(
+        TIINY_BASE + "/v1/rerank", data=body,
+        headers={"Authorization": "Bearer " + TIINY_KEY,
+                 "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            scored = json.loads(resp.read()).get("results") or []
+    except Exception as exc:
+        log("[rerank] unavailable (%s); keeping vault order" % str(exc)[:80])
+        return results
+    order = []
+    for s_ in scored:
+        i = s_.get("index")
+        if isinstance(i, int) and 0 <= i < len(docs):
+            row = dict(docs[i][0])
+            row["_rerank"] = round(float(s_.get("relevance_score") or 0), 4)
+            order.append(row)
+    if not order:
+        return results
+    tail = results[len(docs):]
+    return order + list(tail)
+
+
 # Host (Orange Pi) stats, read from local /proc//sys — the server runs on the box
 # it reports on. Identity is immutable per boot; cpu% needs a previous /proc/stat
 # sample, kept in _HOST. Every field degrades to None off-Linux (dev on macOS).
@@ -695,8 +734,15 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             log("[ask] kb retrieve failed: %s" % str(exc)[:120])
             return self.json(502, {"error": "vault unreachable"})
+        # Retrieve-then-rerank: the vault returns semantic neighbours, then the
+        # device's cross-encoder scores each passage against the actual question.
+        # Vector search is recall-oriented; the reranker is precision-oriented,
+        # and it is only 2 NPU units. If it is not loaded we simply keep the
+        # vault's own ordering.
+        raw_results = [r for r in (data.get("results") or []) if isinstance(r, dict)]
+        raw_results = rerank_passages(question, raw_results)
         out = []
-        for r in (data.get("results") or []):
+        for r in raw_results:
             if not isinstance(r, dict):
                 continue
             text = str(r.get("lossless_restatement") or "")
@@ -707,7 +753,8 @@ class Handler(BaseHTTPRequestHandler):
                 continue
             if len(out) >= 5:
                 break
-            out.append({"text": text[:700],
+            out.append({"score": r.get("_rerank"),
+                        "text": text[:700],
                         "topic": str(r.get("topic") or "")[:40],
                         "entities": [str(e)[:40] for e in (r.get("entities") or [])[:6]],
                         "keywords": [str(k)[:40] for k in (r.get("keywords") or [])[:6]]})
@@ -746,7 +793,7 @@ class Handler(BaseHTTPRequestHandler):
                         (day,)).fetchone()
                     if row:
                         title = (rget(row, "title") or title)
-                        desc = (rget(row, "body") or desc)[:600]
+                        desc = (rget(row, "body") or desc)
                 except Exception:
                     pass
                 # podcast clients show duration from the feed; probe it once
@@ -769,6 +816,7 @@ class Handler(BaseHTTPRequestHandler):
         for e in self._episode_list()[:20]:
             eps.append({"day": e["day"], "title": e["title"],
                         "desc": (e.get("desc") or "")[:400],
+                        "script": (e.get("desc") or ""),
                         "seconds": round(e.get("seconds") or 0, 1),
                         "bytes": e.get("bytes"),
                         "url": "/episodes/%s.mp3" % e["day"],

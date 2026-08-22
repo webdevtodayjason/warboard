@@ -398,6 +398,18 @@ a.nm.hf:hover{color:#e8ebf2;border-bottom-color:#c8372d}
 #pPick{flex:1;min-width:0;font:inherit;font-size:10px;background:#0a0c10;color:#9aa4b8;
   border:1px solid #1d222e;border-radius:3px;padding:4px 6px}
 .pfoot a{font-size:9.5px;letter-spacing:.08em;color:#d9a441;text-decoration:none;white-space:nowrap}
+.tlogo-p{color:#5c667a;display:inline-flex;align-items:center;margin-left:6px}
+.tlogo-p:hover{color:#e8ebf2}
+.pscript{font:inherit;font-size:9.5px;letter-spacing:.08em;cursor:pointer;background:#0a0c10;
+  border:1px solid #1d222e;color:#9aa4b8;border-radius:3px;padding:4px 8px;white-space:nowrap}
+.pscript:hover{border-color:#2fa96d;color:#e8ebf2}
+.pscript.on{border-color:#2fa96d;color:#2fa96d}
+.pscriptbox{max-height:0;overflow:hidden;transition:max-height .25s ease;margin-top:0}
+.pscriptbox.open{max-height:260px;overflow-y:auto;margin-top:9px;border-top:1px solid #1d222e;padding-top:8px}
+#pScriptBody{font-size:11.5px;line-height:1.7;color:#707a8e}
+#pScriptBody .sx{transition:color .2s,background .2s;border-radius:2px;padding:0 1px}
+#pScriptBody .sx.now{color:#e8ebf2;background:rgba(47,169,109,.13)}
+#pScriptBody .sx.done{color:#5c667a}
 .pfoot a:hover{color:#e8ebf2}
 @media(max-width:620px){
   .player{right:8px;left:8px;width:auto;bottom:8px}
@@ -1030,6 +1042,7 @@ a.nm.hf:hover{color:#e8ebf2;border-bottom-color:#c8372d}
   <div class="phead" id="pdrag">
     <span class="bar"></span>
     <span class="t">AUDIO BRIEF</span>
+    <a class="tlogo-p" href="https://tiiny.ai/" target="_blank" rel="noopener noreferrer" title="Voiced on a Tiiny Pocket"><svg class="tmark" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 120 42" height="11" width="31" aria-label="Tiiny"><g fill="currentColor"><path d="M42.8636 0H36.4341V5.68257H42.8636V0Z"/><path d="M62.1431 9.86291V11.3701V30.6261H68.5726V11.3701H75.0022V5.6875H62.1431V9.86291Z"/><path d="M42.8636 11.3691H36.4341V30.6207H42.8636V11.3691Z"/><path d="M107.141 36.3184H94.2817V42.0009H107.141V36.3184Z"/><path d="M75.0022 17.0563H81.4317V30.6252H87.8613V17.0563V15.5491V11.3691H75.0022V17.0563Z"/><path d="M55.7228 11.3691H49.2932V30.6207H55.7228V11.3691Z"/><path d="M120 5.6875H113.57V30.6261H107.141V24.939H100.711V5.6875H94.2817V24.939V26.4462V30.6261H107.141V36.3087H113.57V30.6261H120V5.6875Z"/><path d="M55.7228 0H49.2932V5.68257H55.7228V0Z"/><path d="M0 0V5.68257H1.18103H12.8591V0H1.18103H0Z"/><path d="M19.2887 0V5.68257H30.9668H32.1478V0H30.9668H19.2887Z"/><path d="M19.2887 5.6875H12.8591V30.6261H19.2887V5.6875Z"/></g></svg></a>
     <span class="grip" title="drag me">&#8942;&#8942;</span>
     <button class="pclose" id="pclose" type="button" title="close">&times;</button>
   </div>
@@ -1039,8 +1052,10 @@ a.nm.hf:hover{color:#e8ebf2;border-bottom-color:#c8372d}
     <audio id="pAudio" controls preload="none"></audio>
     <div class="pfoot">
       <select id="pPick" title="choose an episode"></select>
+      <button class="pscript" id="pScriptBtn" type="button" title="show the script Tiiny is reading">&#9662; SCRIPT</button>
       <a href="/feed.xml" id="pFeed" title="subscribe in a podcast app">&#128225; RSS</a>
     </div>
+    <div class="pscriptbox" id="pScriptBox"><div id="pScriptBody"></div></div>
   </div>
 </aside>
 
@@ -1704,7 +1719,7 @@ function renderSitrep(meta){
   $("sitrepAge").textContent=ts?("FILED "+ago(ts).toUpperCase()):"";
 }
 /* ── AUDIO BRIEF PLAYER ─────────────────────────────────────────────────── */
-var PL={eps:[],loaded:false};
+var PL={eps:[],loaded:false,sents:[],cur:-1};
 function fmtDur(s){ s=Math.round(s||0); var m=Math.floor(s/60); return m+":"+String(s%60).padStart(2,"0"); }
 function pickEpisode(day){
   var ep=null;
@@ -1712,6 +1727,7 @@ function pickEpisode(day){
   if(!ep) ep=PL.eps[0];
   if(!ep) return;
   $("pTitle").textContent=ep.title||("Brief "+ep.day);
+  PL.cur=-1; buildScript(ep.script||ep.desc||"");
   $("pDay").textContent=ep.day;
   $("pDur").textContent=ep.seconds?fmtDur(ep.seconds):"";
   var a=$("pAudio");
@@ -1733,6 +1749,38 @@ function openPlayer(){
     pickEpisode(PL.eps[0].day);
     $("pAudio").play().catch(function(){});   /* autoplay may be blocked; controls are right there */
   }).catch(function(){ $("pTitle").textContent="Player unavailable."; });
+}
+function buildScript(text){
+  var host=$("pScriptBody");
+  var sents=String(text||"").replace(/\s+/g," ").split(/(?<=[.!?])\s+/).filter(function(x){return x.trim();});
+  if(!sents.length){ host.innerHTML='<div class="empty">no script</div>'; PL.sents=[]; return; }
+  /* No word timings come back from the TTS endpoint, so position is ESTIMATED
+     from character offsets against total duration. Speech rate is near enough
+     constant that sentence-level tracking stays honest; word-level would drift. */
+  var total=sents.join(" ").length, acc=0, spans=[];
+  PL.sents=sents.map(function(s,i){
+    var start=acc/total; acc+=s.length+1;
+    spans.push('<span class="sx" data-i="'+i+'">'+esc(s)+' </span>');
+    return {start:start, end:acc/total};
+  });
+  host.innerHTML=spans.join("");
+}
+function followScript(){
+  var a=$("pAudio");
+  if(!PL.sents||!PL.sents.length||!a.duration||!isFinite(a.duration)) return;
+  var frac=a.currentTime/a.duration, cur=-1;
+  for(var i=0;i<PL.sents.length;i++){ if(frac>=PL.sents[i].start) cur=i; }
+  if(cur===PL.cur) return;
+  PL.cur=cur;
+  var els=$("pScriptBody").querySelectorAll(".sx");
+  for(var j=0;j<els.length;j++){
+    els[j].className="sx"+(j<cur?" done":(j===cur?" now":""));
+  }
+  var now=els[cur];
+  if(now && $("pScriptBox").classList.contains("open")){
+    var box=$("pScriptBox"), top=now.offsetTop-box.clientHeight/2;
+    box.scrollTo({top:Math.max(0,top),behavior:"smooth"});
+  }
 }
 function closePlayer(){ $("player").classList.remove("on"); try{$("pAudio").pause();}catch(e){} }
 function makeDraggable(panel, handle){
@@ -2227,6 +2275,12 @@ function boot(){
   $("playBtn").addEventListener("click",openPlayer);
   $("pclose").addEventListener("click",closePlayer);
   $("pPick").addEventListener("change",function(){ pickEpisode(this.value); $("pAudio").play().catch(function(){}); });
+  $("pScriptBtn").addEventListener("click",function(){
+    var open=$("pScriptBox").classList.toggle("open");
+    this.classList.toggle("on",open);
+    this.innerHTML=(open?"&#9652;":"&#9662;")+" SCRIPT";
+  });
+  $("pAudio").addEventListener("timeupdate",followScript);
   makeDraggable($("player"), $("pdrag"));
   $("missionBtn").addEventListener("click",function(){ expandPanel(".panel.about","THE MISSION — WHAT IS WARBOARD?"); });
   $("xclose").addEventListener("click",closeExpand);
