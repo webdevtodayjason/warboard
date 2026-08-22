@@ -263,26 +263,98 @@ def fetch_feed(con, feed):
     try:
         data = http_get(feed["url"])
     except urllib.error.HTTPError as exc:
-        return 0, 0, "HTTP %s" % exc.code
+        return 0, 0, "HTTP %s" % exc.code, 0
     except Exception as exc:
-        return 0, 0, "%s: %s" % (type(exc).__name__, str(exc)[:120])
+        return 0, 0, "%s: %s" % (type(exc).__name__, str(exc)[:120]), 0
     return insert_parsed(con, feed["name"], data)
+
+
+
+# --------------------------------------------------------------------------- #
+# Ingest-time deduplication
+#
+# Measured 2026-08-21: 68% of the 200 newest items were near-duplicates and a
+# single source (NWS) held 80% of the wire. Alert feeds re-publish the same
+# warning under a fresh URL/GUID, so `url UNIQUE` never sees them, and each copy
+# then costs a full Ornith inference and lands on the DEVELOPING panel as fake
+# "coverage" ("Red Flag Warning Issued In Seattle Area", 26 identical members).
+#
+# The gate is a normalised title fingerprint per source: strip punctuation and
+# EVERY number, which collapses the timestamps that are the only thing separating
+# consecutive alerts from one office. "Red Flag Warning issued August 21 at
+# 8:34PM PDT until August 22 at 9:00PM PDT by NWS Medford OR" and its 9:12PM
+# reissue both reduce to the same signature, so the office's standing warning is
+# represented once per window instead of 26 times.
+#
+# This is deliberately NOT the embedding clustering: clustering groups different
+# outlets covering one event (wanted, on the DEVELOPING panel); this removes
+# repeats of one source's own bulletin (not wanted anywhere).
+# --------------------------------------------------------------------------- #
+
+DEDUP_WINDOW_S = 12 * 3600      # how far back a fingerprint stays "already seen"
+DEDUP_SCAN_LIMIT = 400          # recent rows examined per source; bounds the query
+SOURCE_CYCLE_CAP = 25           # max NEW items one source may add in one fetch cycle
+
+_FP_STOP = frozenset("""a an the of in on at to for and or with from by is are was were as
+it its this that until issued by area county counties warning watch advisory statement
+am pm edt cdt mdt pdt est cst mst pst utc""".split())
+
+
+def title_fingerprint(title):
+    """Normalised signature of a headline: lowercase, no punctuation, NO DIGITS.
+
+    Dropping digits is the load-bearing part — it is what makes two reissues of
+    the same weather bulletin collapse together while leaving ordinary news
+    headlines (which rarely differ only by numbers) distinct.
+    """
+    t = re.sub(r"[^a-z\s]", " ", (title or "").lower())
+    words = [w for w in t.split() if len(w) > 2 and w not in _FP_STOP]
+    return " ".join(sorted(set(words)))
+
+
+def _recent_fingerprints(con, source, now):
+    """Fingerprints this source has already produced inside the dedup window."""
+    try:
+        rows = con.execute(
+            "SELECT title FROM items WHERE source = ? AND fetched_at >= ? "
+            "ORDER BY fetched_at DESC LIMIT ?",
+            (source, now - DEDUP_WINDOW_S, DEDUP_SCAN_LIMIT)).fetchall()
+    except Exception:
+        return set()          # never let dedup break ingestion
+    out = set()
+    for r in rows:
+        fp = title_fingerprint(r["title"] if hasattr(r, "keys") else r[0])
+        if fp:
+            out.add(fp)
+    return out
 
 
 def insert_parsed(con, source, data):
     try:
         items = parse_feed(data)
     except Exception as exc:
-        return 0, 0, "parse: %s" % str(exc)[:120]
+        return 0, 0, "parse: %s" % str(exc)[:120], 0
+    now = time.time()
+    seen = _recent_fingerprints(con, source, now)
     new = 0
+    skipped = 0
     for item in items:
+        if new >= SOURCE_CYCLE_CAP:
+            skipped += 1          # one source may not own the wire in a single cycle
+            continue
+        fp = title_fingerprint(item["title"])
+        if fp and fp in seen:
+            skipped += 1
+            continue
         try:
             if db.insert_item(con, item["url"], source, item["title"],
                               item["published"], item["summary"]):
                 new += 1
+                if fp:
+                    seen.add(fp)   # also dedupes within this same batch
         except Exception:
             continue  # one bad row must not cost us the rest of the feed
-    return new, len(items), None
+    return new, len(items), None, skipped
 
 
 def fetch_all(con):
@@ -308,6 +380,7 @@ def fetch_all(con):
             bodies[name] = (data, err)
 
     total_new = 0
+    total_skipped = 0
     errors = {}
     per_feed = {}
     for feed in FEEDS:
@@ -317,11 +390,13 @@ def fetch_all(con):
             errors[name] = err
             per_feed[name] = {"items": 0, "new": 0, "error": err}
             continue
-        new, seen, perr = insert_parsed(con, name, data)
+        new, seen, perr, skipped = insert_parsed(con, name, data)
         total_new += new
+        total_skipped += skipped
         if perr:
             errors[name] = perr
-        per_feed[name] = {"items": seen, "new": new, "error": perr}
+        per_feed[name] = {"items": seen, "new": new, "error": perr,
+                          "skipped": skipped}
 
     checked = len(FEEDS)
     if os.environ.get("GNEWS_API_KEY"):
@@ -336,7 +411,8 @@ def fetch_all(con):
         db.set_meta(con, "last_fetch_ts", time.time())
     except Exception:
         pass
-    return {"new": total_new, "checked": checked, "errors": errors, "per_feed": per_feed}
+    return {"new": total_new, "checked": checked, "errors": errors,
+            "per_feed": per_feed, "skipped": total_skipped}
 
 
 def fetch_gnews(con):
