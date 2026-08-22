@@ -527,7 +527,7 @@ a.nm.hf:hover{color:#e8ebf2;border-bottom-color:#c8372d}
   body{overflow:auto}
   .app{height:auto;min-height:100%}
   .grid{grid-template-columns:1fr;grid-template-rows:none;
-    grid-template-areas:"aor" "wire" "dev" "right"}
+    grid-template-areas:"aor" "wire" "dev" "sitrep" "right" "ask"}
   .a-wire .pbody{max-height:60vh}
   .a-dev .pbody{max-height:50vh}
   .unit .pbody{max-height:none}
@@ -547,6 +547,90 @@ a.nm.hf:hover{color:#e8ebf2;border-bottom-color:#c8372d}
   .brand h1{font-size:14px;letter-spacing:.18em}
   .clock .t{font-size:17px}
   .qgrid{grid-template-columns:1fr 1fr}
+}
+
+/* ─────────────── PHONES ───────────────
+   The board is built for a wall display; on a handset it becomes a single
+   readable column. Nothing may overflow horizontally: filter rows scroll
+   inside themselves rather than pushing the page wider. */
+@media(max-width:620px){
+  html,body{max-width:100%;overflow-x:hidden}
+  :root{--gap:8px}
+  .app{height:auto}
+  .grid{padding:8px;gap:8px}
+
+  /* top bar: brand + mission on one line, status + clocks below */
+  .topbar{padding:8px 10px;gap:6px}
+  .brand{flex:1 1 100%;display:flex;align-items:center;gap:8px}
+  .brand .sub{display:none}
+  .mission{margin-left:auto;font-size:9px;padding:4px 10px}
+  .leds{width:100%;display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:0}
+  .led{min-width:0;padding:0;border:none}
+  .led .name{font-size:8.5px}.led .val{font-size:8.5px}
+  .clocks{width:100%;display:flex;gap:14px;padding:0}
+  .clock .t{font-size:15px}.clock .d{font-size:8px}
+
+  /* filter bars: swipe instead of overflow */
+  .filters{padding:6px 8px;gap:6px}
+  .frow{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;
+        scrollbar-width:none;padding-bottom:2px}
+  .frow::-webkit-scrollbar{display:none}
+  .frow>*{flex:0 0 auto}
+
+  /* panels: give each a sensible slice of the viewport, scroll inside */
+  .panel{border-radius:6px}
+  .ph{padding:8px 10px}.ph .t{font-size:10px}
+  .a-wire .pbody{max-height:70vh}
+  .a-dev .pbody{max-height:46vh}
+  .col-right{gap:8px}
+  .unit{max-height:none;min-height:0}
+  .unit .pbody{max-height:none;overflow:visible}
+  .unit::after{display:none}          /* scroll-fade is meaningless once it is not capped */
+  .oplog{min-height:0}
+  .opbody{max-height:44vh}
+  .sitbody{max-height:40vh}
+  #askOut{max-height:50vh}
+
+  /* the gauge + models row stacks (also handled at 520px, restated for clarity) */
+  .grow{grid-template-columns:1fr;gap:8px}
+  .gaugewrap canvas{height:110px}
+  .aorwrap{grid-template-columns:repeat(2,1fr)}
+  .qgrid{grid-template-columns:repeat(3,1fr)}
+  .camstage{height:auto;aspect-ratio:16/9}
+
+  /* wire rows breathe */
+  .wrow{padding:9px 10px}
+  .wrow .ttl{font-size:13.5px;line-height:1.45}
+  .wrow .sum{font-size:12px}
+  .clu li{white-space:normal}          /* nowrap+ellipsis wastes a phone screen */
+
+  /* drawer and expand modal go full-screen */
+  .drawer{width:100vw}
+  .xmodal{width:100vw;height:100vh;max-width:none;top:0;left:0;transform:translate(0,0) scale(.98);border:none}
+  .xmodal.open{transform:none}
+
+  /* status bar: keep the essentials, drop the keyboard hints */
+  .statusbar{flex-wrap:wrap;height:auto;padding:7px 10px;gap:5px 12px;font-size:9px}
+  .statusbar .fnote{display:none}
+  .statusbar .right{margin-left:0;width:100%}
+}
+
+/* Narrow handsets (iPhone 390, small Android 360). Everything here exists to
+   guarantee no horizontal overflow at 320px+, since fixed-width ornaments like
+   the token odometer are the only things that cannot shrink on their own. */
+@media(max-width:430px){
+  .app{overflow-x:hidden}
+  .qgrid{grid-template-columns:1fr 1fr}
+  .odo .d{width:15px;height:25px;line-height:24px;font-size:15px}
+  .odo .sep{width:4px;font-size:14px;line-height:25px}
+  .aor .big{font-size:26px}
+  .clock{min-width:0;padding:0}
+  .clock .t{font-size:14px}
+  .gaugetxt .v{font-size:30px}
+  .wrow .meta{flex-wrap:wrap;gap:3px 8px}
+  .wrow .src{max-width:60%}
+  .tags{flex-wrap:wrap}
+  .dsib li,.clu li{white-space:normal}
 }
 </style>
 </head>
