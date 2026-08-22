@@ -43,7 +43,8 @@ LOUDNORM = "loudnorm=I=-18:TP=-2:LRA=11"
 SITE_TITLE = "WARBOARD Daily Brief"
 SITE_LINK = "https://warboard.semfreak.dev"
 SITE_DESC = ("A daily world-news intelligence briefing, written and spoken entirely "
-             "on a Tiiny Pocket edge device. No cloud AI is used at any stage.")
+             "on a Tiiny Pocket edge device. Narrated by Tiiny, the device's own voice. "
+             "No cloud AI is used at any stage.")
 
 
 # --------------------------------------------------------------------------- #
@@ -234,7 +235,8 @@ def render_episode(text, out_path, speech=None, log=print):
         os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
         ok3, err3 = _ffmpeg(["-i", joined, "-af", LOUDNORM,
                              "-c:a", "libmp3lame", "-b:a", "128k", "-ar", "44100",
-                             "-metadata", "artist=Tiiny Pocket",
+                             "-metadata", "artist=Tiiny",
+                             "-metadata", "comment=Narrated by Tiiny, on-device",
                              "-metadata", "album=%s" % SITE_TITLE,
                              out_path])
         if not ok3:
@@ -300,7 +302,7 @@ def build_feed(episodes, public_base):
         '  <description>%s</description>\n'
         '  <language>en-us</language>\n'
         '  <lastBuildDate>%s</lastBuildDate>\n'
-        '  <itunes:author>Tiiny Pocket via WARBOARD</itunes:author>\n'
+        '  <itunes:author>Tiiny</itunes:author>\n'
         '  <itunes:summary>%s</itunes:summary>\n'
         '  <itunes:explicit>false</itunes:explicit>\n'
         '  <itunes:category text="News"/>\n'
